@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import weakref
+from typing import Any, Sequence
+
 import pandas as pd
 import numpy as np
 import abc
@@ -97,7 +99,91 @@ class _MaskingMixin(abc.ABC):
         return obj._undo("select")
 
 
-class Variable(FuncMixin, _MaskingMixin):
+class Series:
+    def __init__(
+        self,
+        data: Any | None = None,
+        index: pd.Index | None = None,
+    ):
+        data = pd.Series(data, index=index, dtype=float)
+        self._raw: np.ndarray = np.array(data, dtype=float)
+        self._index: pd.Index = data.index
+
+    @property
+    def raw(self) -> np.ndarray:
+        return self._raw
+
+    @property
+    def index(self) -> pd.Index:
+        return self._index
+
+    @index.setter
+    def index(self, value):
+        index = pd.Index(value)
+        if isinstance(index, pd.MultiIndex):
+            raise ValueError("MultiIndex is not allowed here.")
+        if not len(index) == len(self._index):
+            raise ValueError(
+                f"Length mismatch: Expected axis "
+                f"has {len(self._index)} elements, "
+                f"new values have {len(index)} elements"
+            )
+        if not index.is_unique:
+            raise ValueError("Index must not have duplicates")
+        self._index = index
+
+    # def __getitem__(self, item):
+    #     self._raw.__getitem__(item)
+    #
+    # def __setitem__(self, key, value):
+    #     self._raw.__setitem__(key, value)
+
+    def to_pandas(self, copy=True) -> pd.Series:
+        return pd.Series(data=self._raw, index=self._index, dtype=float, copy=copy)
+
+    def __repr__(self):
+        if not hasattr(self, '_index'):
+            return super().__repr__()  # for errors within init
+        return repr(self.to_pandas(copy=False))
+
+
+class MaskedSeries(Series):
+    def __init__(
+        self,
+        data: Any | None = None,
+        index: pd.Index | None = None,
+        mask: Sequence | None = None
+    ):
+        super().__init__(data=data, index=index)
+        self._raw: np.ma.MaskedArray = np.ma.array(self._raw, mask=mask, hard_mask=True)
+
+    @property
+    def mask(self):
+        return self._raw.mask
+
+    @mask.setter
+    def mask(self, value):
+        if len(self.mask) != value:
+            raise ValueError(
+                f"Length mismatch: Expected array "
+                f"has {len(self._index)} elements, "
+                f"given mask have {len(value)} elements"
+            )
+        self._raw.mask = value
+
+# Series: base for data storage
+# Variable has data-series and flags-series
+#   flags always as long as data
+#   can reindex and stuff
+# MaskedVariable has masked-data-series and flags series
+#   flags always as long as data
+#   only non index changing operations
+
+class Variable(Series):
+    pass
+
+
+class Variable2(FuncMixin, _MaskingMixin):
     def __init__(
         self,
         data: pd.Series,
@@ -144,3 +230,7 @@ class Variable(FuncMixin, _MaskingMixin):
     def dododo(self, arg0, arg1, kw0=None, kw1=None):
         self.data[::2] = -self.data[::2]
         return self
+
+if __name__ == '__main__':
+    s = Series([1,2,3])
+    print(s)
