@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import numpy as np
 import weakref
+import abc
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 if TYPE_CHECKING:
     from saqc.core.variable import Variable
+
+T = TypeVar('T')
 
 
 class MaskingContextManager:
@@ -73,5 +76,92 @@ class MaskingContextManager:
         new._kwargs = self._kwargs
         # do not copy self.refs
         return new
+
+
+class _MaskingMixin(abc.ABC):
+    def __init__(self, *args, **kwargs):
+        # context manager for use with `with`-statement
+        # we hold a list to allow nested `with`-statements
+        self._cms: weakref.WeakSet[MaskingContextManager] = weakref.WeakSet()
+        # context manager for direct calls to `mask` and `unmask`
+        self._cm: MaskingContextManager | None = None
+
+    @abc.abstractmethod
+    def copy(self: T) -> T:
+        ...
+
+    def __finalize__(self: T, obj) -> T:
+        # self is new, obj is old
+        if obj._cm is not None:
+            self._cm = obj._cm.copy(self)
+
+        self._cms = obj._cms.copy()
+        for cm in obj._cms:
+            cm.register(self)
+        return self
+
+    @property
+    def is_masked(self) -> bool:
+        # todo: check if weakref.WeakSet works as expected in
+        #   any case
+        return not (self._cm is None or len(self._cms) == 0)
+
+    # ############################################################
+    # with statement context manager
+    # ############################################################
+
+    @property
+    def selecting(self) -> MaskingContextManager:
+        new = self.copy()
+        cm = MaskingContextManager(new, invert=True)
+        new._cms.add(cm)
+        return cm
+
+    @property
+    def masking(self) -> MaskingContextManager:
+        new = self.copy()
+        cm = MaskingContextManager(new)
+        new._cms.add(cm)
+        return cm
+
+    # ############################################################
+    # method interface
+    # ############################################################
+
+    def _mask_or_select(self: T, mask=None, invert=False) -> T:
+        if self._cm is not None:
+            raise RuntimeError(
+                "Data is already masked or selected. For mixing or nesting "
+                "masks and/or selections use the contextmanager `masking` "
+                "and `selecting` with the `with` statement. "
+            )
+        self._cm = MaskingContextManager(self, invert=invert)
+        return self._cm.mask(mask)
+
+    def _undo(self: T, action: str) -> T:
+        if self._cm is None:
+            raise RuntimeError(f"Data is not {action}ed.")
+        assert self._cm._obj is self
+        self._cm.unmask()
+        self._cm = None  # destroy reference
+        return self
+
+    def mask(self: T, mask=None, copy=False) -> T:
+        obj = self.copy() if copy else self
+        return obj._mask_or_select(mask=mask)
+
+    def select(self: T, sel=None, copy=False) -> T:
+        obj = self.copy() if copy else self
+        return obj._mask_or_select(mask=sel, invert=True)
+
+    def unmask(self: T, copy=False) -> T:
+        obj = self.copy() if copy else self
+        return obj._undo("mask")
+
+    def deselect(self: T, copy=False) -> T:
+        obj = self.copy() if copy else self
+        return obj._undo("select")
+
+
 
 

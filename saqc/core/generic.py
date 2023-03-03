@@ -10,17 +10,51 @@ from typing import Callable
 
 if TYPE_CHECKING:
     from saqc import Variable, SaQC
+    from saqc.core.flagsframe import FlagsFrame
 
 from functools import wraps
-from saqc.types import F, T
+from saqc.types import F, T, Self, FlagsFrameT
+from abc import ABC, abstractmethod
 
 
-# def add_to_SaQC(func: T) -> T:
-#     @wraps(func)
-#     def decorator(self: VarOrQcT, *args, **kwargs) -> VarOrQcT:
-#         return func(self, *args, **kwargs)
-#
-#     return decorator
+def compose(target, func_name) -> F:
+    def func(self, *args, **kwargs):
+        return getattr(getattr(self, target), func_name)(*args, **kwargs)
+
+    return func
+
+
+class VariableABC(ABC):
+    @property
+    @abstractmethod
+    def index(self: Variable) -> pd.Index:
+        ...
+
+    @property
+    @abstractmethod
+    def data(self: Variable) -> pd.Series:
+        ...
+
+    @property
+    @abstractmethod
+    def flags(self: Variable) -> FlagsFrame:
+        ...
+
+    @abstractmethod
+    def copy(self: Variable, deep: bool = True) -> Variable:
+        ...
+
+    @abstractmethod
+    def equals(self: Variable, other) -> bool:
+        ...
+
+
+class NDFrame:
+    __eq__ = compose("_data", "eq")
+
+    def __init__(self, data, index: pd.Index = None):
+        self._data = data
+        self._index = index
 
 
 class FuncMixin:

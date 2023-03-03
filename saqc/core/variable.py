@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import weakref
+from abc import ABC
 from typing import Any, Sequence
 
 import pandas as pd
@@ -9,167 +10,129 @@ import numpy as np
 import abc
 from saqc.constants import UNFLAGGED
 from saqc.core.flagsframe import FlagsFrame
-from saqc.core.generic import FuncMixin
+from saqc.core.generic import VariableABC
 from saqc.core.masking import MaskingContextManager
-from saqc.types import T
+from saqc.types import Self
 
 
-class _MaskingMixin(abc.ABC):
-    def __init__(self, *args, **kwargs):
-        # context manager for use with `with`-statement
-        # we hold a list to allow nested `with`-statements
-        self._cms: weakref.WeakSet[MaskingContextManager] = weakref.WeakSet()
-        # context manager for direct calls to `mask` and `unmask`
-        self._cm: MaskingContextManager | None = None
-
-    @abc.abstractmethod
-    def copy(self: T) -> T:
-        ...
-
-    def __finalize__(self: T, obj) -> T:
-        # self is new, obj is old
-        if obj._cm is not None:
-            self._cm = obj._cm.copy(self)
-
-        self._cms = obj._cms.copy()
-        for cm in obj._cms:
-            cm.register(self)
-        return self
-
-    @property
-    def is_masked(self) -> bool:
-        # todo: check if weakref.WeakSet works as expected in
-        #   any case
-        return not (self._cm is None or len(self._cms) == 0)
-
-    # ############################################################
-    # with statement context manager
-    # ############################################################
-
-    @property
-    def selecting(self) -> MaskingContextManager:
-        new = self.copy()
-        cm = MaskingContextManager(new, invert=True)
-        new._cms.add(cm)
-        return cm
-
-    @property
-    def masking(self) -> MaskingContextManager:
-        new = self.copy()
-        cm = MaskingContextManager(new)
-        new._cms.add(cm)
-        return cm
-
-    # ############################################################
-    # method interface
-    # ############################################################
-
-    def _mask_or_select(self: T, mask=None, invert=False) -> T:
-        if self._cm is not None:
-            raise RuntimeError(
-                "Data is already masked or selected. For mixing or nesting "
-                "masks and/or selections use the contextmanager `masking` "
-                "and `selecting` with the `with` statement. "
-            )
-        self._cm = MaskingContextManager(self, invert=invert)
-        return self._cm.mask(mask)
-
-    def _undo(self: T, action: str) -> T:
-        if self._cm is None:
-            raise RuntimeError(f"Data is not {action}ed.")
-        assert self._cm._obj is self
-        self._cm.unmask()
-        self._cm = None  # destroy reference
-        return self
-
-    def mask(self: T, mask=None, copy=False) -> T:
-        obj = self.copy() if copy else self
-        return obj._mask_or_select(mask=mask)
-
-    def select(self: T, sel=None, copy=False) -> T:
-        obj = self.copy() if copy else self
-        return obj._mask_or_select(mask=sel, invert=True)
-
-    def unmask(self: T, copy=False) -> T:
-        obj = self.copy() if copy else self
-        return obj._undo("mask")
-
-    def deselect(self: T, copy=False) -> T:
-        obj = self.copy() if copy else self
-        return obj._undo("select")
-
-
-class Series:
+class VariableBase(VariableABC):
     def __init__(
-        self,
-        data: Any | None = None,
-        index: pd.Index | None = None,
+        self, data, index: pd.Index | None = None, flags: FlagsFrame | None = None
     ):
-        data = pd.Series(data, index=index, dtype=float)
-        self._raw: np.ndarray = np.array(data, dtype=float)
-        self._index: pd.Index = data.index
+        if isinstance(data, self.__class__):  # fastpath
+            self._data = data._data.copy()
+            self._flags = FlagsFrame(data.flags.current())
+            return
+
+        if index is not None:
+            index = index.copy()
+            index.name = None
+        self._data = pd.Series(data, index=index, dtype=float)
+
+        # the FlagsFrame either is empty (if None is passed) or
+        # have a single column if another FlagsFrame is passed,
+        # then the current flags are used.
+        if flags is None:
+            flags = self.data.index
+        self._flags: FlagsFrame = FlagsFrame(flags)
 
     @property
-    def raw(self) -> np.ndarray:
-        return self._raw
-
-    @property
-    def index(self) -> pd.Index:
-        return self._index
+    def index(self):
+        return self._data.index
 
     @index.setter
-    def index(self, value):
-        index = pd.Index(value)
-        if isinstance(index, pd.MultiIndex):
-            raise ValueError("MultiIndex is not allowed here.")
-        if not len(index) == len(self._index):
-            raise ValueError(
-                f"Length mismatch: Expected axis "
-                f"has {len(self._index)} elements, "
-                f"new values have {len(index)} elements"
-            )
-        if not index.is_unique:
-            raise ValueError("Index must not have duplicates")
-        self._index = index
-
-    # def __getitem__(self, item):
-    #     self._raw.__getitem__(item)
-    #
-    # def __setitem__(self, key, value):
-    #     self._raw.__setitem__(key, value)
-
-    def to_pandas(self, copy=True) -> pd.Series:
-        return pd.Series(data=self._raw, index=self._index, dtype=float, copy=copy)
-
-    def __repr__(self):
-        if not hasattr(self, '_index'):
-            return super().__repr__()  # for errors within init
-        return repr(self.to_pandas(copy=False))
-
-
-class MaskedSeries(Series):
-    def __init__(
-        self,
-        data: Any | None = None,
-        index: pd.Index | None = None,
-        mask: Sequence | None = None
-    ):
-        super().__init__(data=data, index=index)
-        self._raw: np.ma.MaskedArray = np.ma.array(self._raw, mask=mask, hard_mask=True)
+    def index(self, value) -> None:
+        self._data.index = value
 
     @property
-    def mask(self):
-        return self._raw.mask
+    def data(self) -> pd.Series:
+        return self._data.copy()
 
-    @mask.setter
-    def mask(self, value):
-        if len(self.mask) != value:
-            raise ValueError(
-                f"Length mismatch: Expected array "
-                f"has {len(self._index)} elements, "
-                f"given mask have {len(value)} elements"
-            )
-        self._raw.mask = value
+    @property
+    def flags(self) -> FlagsFrame:
+        return self._flags
+
+    def copy(self, deep=True):
+        return self.__class__(data=self._data.copy(deep), flags=self._flags.copy(deep))
+
+    def equals(self, other) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self.data.equals(other.data)
+            and self.flags.equals(other.flags)
+        )
+
+    def __eq__(self, other) -> bool:
+        return self.equals(other)
+
+    def __repr__(self) -> str:
+        return repr(self._df_to_render()) + "\n"
+
+    def _df_to_render(self) -> pd.DataFrame:
+        df = self.flags.raw.loc[:, ::-1]
+        df.insert(0, "|", ["|"] * len(df.index))
+        df.insert(0, "flags", self.flags.current().array)
+        df.insert(0, "data", self.data.array)
+        return df
+
+    def to_string(self, *args, **kwargs) -> str:
+        return self._df_to_render().to_string(*args, **kwargs)
+
+
+class UnivariatFunctions(VariableABC, ABC):
+
+    def flag_limits(self: Variable, lower=-np.inf, upper=np.inf, flag=9) -> Variable:
+        result = self.copy(deep=False)
+        mask = (result.data < lower) | (result.data > upper)
+        result.flags.append_with_mask(mask, flag)
+        return result
+
+    def flag_something(self: Variable, flag=99) -> Variable:
+        result = self.copy(deep=False)
+        sample = result.data.sample(frac=0.3)
+        new = result.flags.template()
+        new[sample.index] = flag
+        result.flags.append(new)
+        return result
+
+    def clip(self: Variable, lower, upper, flag=-88) -> Variable:
+        # with data manipulation we must crate new Variable, not a copy
+        result = self.flag_limits(lower, upper).copy()
+        result.data.clip(lower, upper, inplace=True)
+        return Variable(result)
+
+    def flagna(self, flag=999):
+        result = self.copy(False)
+        meta = dict(source='flagna')
+        result.flags.append_with_mask(result.data.isna(), flag, meta)
+        return result
+
+    def interpolate(self: Variable, flag=None) -> Variable:
+        # with data manipulation we must crate
+        # new Variable, not a copy
+        meta = dict(source='interpolate')
+        if flag is not None:
+            flags = self.flagna().flags
+        else:
+            flags = self.flags
+        data = self.data.interpolate()
+        return Variable(data, flags)
+
+    def reindex(self: Variable, index=None, method=None) -> Variable:
+        data = self.data.reindex(index, method=method)
+        return Variable(data)
+
+    def flag_by_condition(self, func, flag=99):
+        # func ==> ``lambda v: v.data != 3``
+        new = self.copy()
+        mask = func(self.data)
+        new.flags.append_with_mask(mask, flag, dict(source='flag_by_condition'))
+        return new
+
+
+class Variable(VariableBase, UnivariatFunctions):
+    pass
+
 
 # Series: base for data storage
 # Variable has data-series and flags-series
@@ -179,11 +142,8 @@ class MaskedSeries(Series):
 #   flags always as long as data
 #   only non index changing operations
 
-class Variable(Series):
-    pass
 
-
-class Variable2(FuncMixin, _MaskingMixin):
+class Variable2:
     def __init__(
         self,
         data: pd.Series,
@@ -211,6 +171,29 @@ class Variable2(FuncMixin, _MaskingMixin):
     def var_only_meth(self):
         pass
 
+    def hide_data(self, mask=None):
+        if mask is None:
+            mask = self.flags.current() > 0
+        else:
+            mask = pd.Series(mask)
+        self._orig = self._data.copy()
+        self._mask = mask
+        self._data[mask] = np.nan
+        return self
+
+    def unhide_data(self):
+        data = self._orig
+        mask = self._mask
+        data[mask] = self._data[mask]
+        self._data = data
+        return self
+
+    def foo666(self):
+        self.hide_data()
+        self.data[:] = 666
+        self.unhide_data()
+        return self
+
     def copy(self) -> Variable:
         return Variable(
             data=self._data.copy(), flags=self._flags.copy(), attrs=dict(self.attrs)
@@ -231,6 +214,11 @@ class Variable2(FuncMixin, _MaskingMixin):
         self.data[::2] = -self.data[::2]
         return self
 
-if __name__ == '__main__':
-    s = Series([1,2,3])
-    print(s)
+
+if __name__ == "__main__":
+    N = np.nan
+    v = Variable()
+    v = v.flag_limits()
+    v.flags.append(pd.Series([N, 5, 5, N]))
+    v.foo666()
+    print(v)

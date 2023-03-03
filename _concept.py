@@ -1,21 +1,52 @@
 from __future__ import annotations
 
-from typing import overload
+import functools
+import typing
+from collections.abc import MutableMapping
+from typing import overload, Iterator
 
 import numpy as np
 import pandas as pd
 from fancy_collections import DictOfPandas
+from pandas._typing import F
 
 # - : original value
 # n : created by function ...
-# i : created by interpolation ...
+# i : filled by interpolation ...
 # c : corrected by function
 # a : aggregated from values ...
 # d : derived from other variable ...
 # s : shifted value
-
 # f : flagged by function ...
 
+# Variante A:
+# data is read only
+# new data must be passed into a new Variable
+#
+#
+# Variante B:
+# data can only be altered if NaN
+# data cannot alter in shape
+# a possible hack: flag data, mask it, it becomes Nan, modify it
+
+# todo: basics
+#   a Variable has data, quality-labels, an index and meta information.
+#       data    read-only array of values
+#       labels  mutable array of values
+#       flags   mutable multidim array of floats (internal use only)
+#       meta    mutable multidim array of strings
+# e.g.
+#             data labels  flags     [long]    [lat]
+# 2000-01-01   0.0           NaN  335.33.22  19.3.44
+# 2000-01-02   1.0    BAD   99.0  335.33.22  19.3.44
+# 2000-01-03   2.0  DOUBT   66.0  335.33.22  19.3.44
+# 2000-01-04   NaN           NaN  335.33.22  19.3.44
+# 2000-01-05   4.0    BAD   99.0  335.33.22  19.3.44
+#
+#
+#   data is immutable
+#   the index is just another way to access data (it can be set arbitrary)
+#   every data operation result in a new Variable
 
 # Wording
 # =======
@@ -118,10 +149,16 @@ from fancy_collections import DictOfPandas
 # Frame.fill_function(..., subset=None) -> new Frame
 # Frame.data_correction(..., subset=None) -> new Frame
 
-class Frame:
+
+class Frame(MutableMapping):
     def __init__(self, **kwargs):
-        assert all(isinstance(v, Variable) for v in kwargs.values())
-        self._vars = kwargs
+        self._vars = {
+            k: v if isinstance(v, Variable) else Variable(v) for k, v in kwargs.items()
+        }
+
+    # ############################################################
+    # Mutable Mapping
+    # ############################################################
 
     @overload
     def __getitem__(self, item: str) -> Variable:
@@ -133,13 +170,14 @@ class Frame:
 
     def __getitem__(self, item):
         if isinstance(item, (list, pd.Index)):
-            return Frame(**{k: v for k, v in self._vars.items() if k in item})
+            return self.__class__(**{k: v for k, v in self._vars.items() if k in item})
         return self._vars.__getitem__(item)
 
-    def __setitem__(self, key: str, value: Variable):
-        assert isinstance(key, str)
-        if not isinstance(value, Variable):
+    def __setitem__(self, key: str, value: Variable | pd.Series):
+        if isinstance(value, pd.Series):
             value = Variable(value)
+        assert isinstance(key, str)
+        assert isinstance(value, Variable)
         self._vars.__setitem__(key, value)
 
     def __delitem__(self, key):
@@ -148,16 +186,81 @@ class Frame:
     def __len__(self):
         return len(self._vars)
 
+    def __iter__(self) -> Iterator[str]:
+        return self._vars.__iter__()
+
+    def __contains__(self, item):
+        return self._vars.__contains__(item)
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, type(self))
+            and len(self) == len(other)
+            and all(self[l] == other[r] for l, r in zip(self, other))
+        )
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def keys(self):
+        return self._vars.keys()
+
+    def items(self):
+        return self._vars.items()
+
+    def values(self):
+        return self._vars.values()
+
+    def get(self, *key):
+        return self._vars.get(*key)
+
+    def pop(self, *key):
+        return self._vars.pop(*key)
+
+    def popitem(self):
+        return self._vars.popitem()
+
+    def clear(self):
+        return self._vars.clear()
+
+    def update(self, other, **kwargs):
+        return self._vars.update(other, **kwargs)
+
+    def setdefault(self, *args):
+        return self._vars.setdefault(*args)
+
+    # ############################################################
+    # Other
+    # ############################################################
+
+    @property
     def columns(self):
         return pd.Index(self._vars.keys())
 
     def __repr__(self):
         return repr(DictOfPandas({k: v.data for k, v in self._vars.items()}))
 
+    def interpolate(self, *args, **kwargs):
+        return self
+
+    def to_grid(self, *args, **kwargs):
+        return self
+
+    def flag_by_condition(self, func, subset=None, flag=99):
+        columns = self.columns if subset is None else pd.Index(subset)
+        new = self.copy()
+        for key in columns:
+            mask = func(self.copy())
+            new[key].flags[mask] = flag
+        return new
+
+    def copy(self):
+        return Frame(**{k: v.copy() for k, v in self._vars.items()})
+
 
 class Variable:
-    def __init__(self, data=None, flags=None, meta=None):
-        data = pd.Series(data, dtype=float)
+    def __init__(self, data=None, index=None, flags=None, meta=None): # noqa
+        data = pd.Series(data, index=index, dtype=float)
         self.data = data
         if flags is None:
             flags = pd.Series(np.nan, index=data.index, dtype=float)
@@ -166,8 +269,19 @@ class Variable:
             meta = pd.Series("", index=data.index, dtype=str)
         self.meta = meta
 
+    @property
+    def index(self):
+        return self.data.index
+
     def copy(self):
-        return Variable(self.data.copy(), self.flags.copy())
+        return Variable(data=self.data.copy(), flags=self.flags.copy())
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, type(self))
+            and self.data.equals(other.data)
+            and self.flags.equals(other.flags)
+        )
 
     def flag_limits(self, lower=-np.inf, upper=np.inf, flag=9):
         # - index:  keep
@@ -201,35 +315,41 @@ class Variable:
         data = self.data.interpolate()
         return Variable(data, flags, meta)
 
-    def reindex(self, index=None, method="shift"):
+    def reindex(self, index=None, method=None):
         # - index:  new
         # - data:   new (derived from old)
         # - flags:  new (fresh start)
-        ["linear", "shift"]
-        return Variable()
+        data = self.data.reindex(index, method=method)
+        return Variable(data=data)
 
     def __repr__(self):
         df = pd.DataFrame(dict(data=self.data, flags=self.flags, info=self.meta))
         return repr(df) + "\n"
 
-
-def masking(mask):
-    pass
+    def flag_by_condition(self, func, flag=99):
+        new = self.copy()
+        mask = func(self.data)
+        new.flags[mask] = flag
+        return new
 
 
 if __name__ == "__main__":
-
-    v0 = Variable([1, 2, np.nan, np.nan, 10])
-    v0.reindex(pd.Index)
-
-    f = Frame()
-    f["a"] = v0
-    a = f["a"]
-    del f['a']
-    f['a'] = a
-    print(f)
-    index = pd.date_range("2000", freq='1y', periods=10)
-    s = pd.Series(range(10), index)
-    print(s[:'2005'])
-    index.get_indexer
-
+    N = np.nan
+    index = pd.date_range("2000", periods=20, freq="1d")
+    d = Variable([1, 2, N, 3, N, 99, 6], index=index[:7])
+    bat = Variable(
+        [10, 10.1, 10.2, N, N, 9.3, 8.2, 8.0, 5.4, 5.4, N, N, 9.1], index=index[2:15]
+    )
+    df = Frame(d=d, bat=bat)
+    print(df.keys())
+    exit(99)
+    df = df.interpolate().to_grid(infere_freq=True)
+    df["bat(orig)"] = df["bat"].copy()
+    df["bat"] = df["bat"].reindex(df["d"].index, method="ffill")
+    df["d"] = df["d"].flag_by_condition(lambda x: df["bat"].data < 10.2)
+    df = df.flag_by_condition(
+        lambda x: x["bat"].data < 10.1, flag=55, subset=["d", "bat"]
+    )
+    print(df)
+    print(df["d"])
+    print(df["bat"])
