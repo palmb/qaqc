@@ -7,7 +7,7 @@ from saqc.core.generic import compose
 from copy import deepcopy
 from saqc.types import Any, SupportsIndex
 from saqc.constants import UNFLAGGED
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, cast
 
 
 class FlagsFrame:
@@ -20,15 +20,22 @@ class FlagsFrame:
     - comparable eq, ne, le, ge, lt, gt return pd.Dataframes
     """
 
-    def __init__(self, flags_or_index: pd.Index | FlagsFrame) -> None:
-        if isinstance(flags_or_index, self.__class__):
-            values = flags_or_index.current().array
-            index = flags_or_index.index
+    def __init__(self, initial: SupportsIndex | pd.Index) -> None:
+        if isinstance(initial, pd.Index):
+            index = initial
+        elif hasattr(initial, "index") and isinstance(initial.index, pd.Index):
+            index = initial.index
         else:
-            values = None
-            index = flags_or_index
-        self._raw = pd.DataFrame(values, index=index, dtype=float)
+            raise TypeError("Not an pd.Index, nor supports index")
+
+        self._raw = pd.DataFrame(index=index, dtype=float)
         self._meta = []
+
+        if isinstance(initial, pd.Index):
+            return
+        if isinstance(initial, self.__class__):
+            initial = initial.current()
+        self.append(initial)
 
     @property
     def raw(self) -> pd.DataFrame:
@@ -56,9 +63,10 @@ class FlagsFrame:
         assert len(self._raw.columns) == len(self.meta)
 
     def copy(self, deep=True) -> FlagsFrame:
-        new = FlagsFrame(None)
+        cfunc = deepcopy if deep else list
+        new = self.__class__(self.index)
         new._raw = self._raw.copy(deep)
-        new._meta = deepcopy(self._meta) if deep else list(self._meta)
+        new._meta = cfunc(self.meta)
         return new
 
     def current(self) -> pd.Series:
@@ -67,6 +75,9 @@ class FlagsFrame:
         else:
             result = self.raw.ffill(axis=1).iloc[:, -1]
         return result.fillna(UNFLAGGED)
+
+    def is_flagged(self) -> pd.Series:
+        return self.current() > UNFLAGGED
 
     def template(self, fill_value=np.nan) -> pd.Series:
         return pd.Series(fill_value, index=self.index, dtype=float)
@@ -94,7 +105,7 @@ class FlagsFrame:
 
     @staticmethod
     def __bool_cmp__(funcname):
-        def cmp(self, other: FlagsFrame) -> pd.DataFrame:
+        def cmp(self, other: FlagsFrame) -> pd.Series:
             if isinstance(other, self.__class__):
                 other = other.current()
             current = self.current()
@@ -112,12 +123,35 @@ class FlagsFrame:
     __le__ = __bool_cmp__("__le__")
 
     def __repr__(self):
-        return repr(self._raw).replace("DataFrame", "FlagsFrame") + "\n"
+        return repr(self._df_to_render()).replace("DataFrame", "FlagsFrame") + "\n"
+
+    def _df_to_render(self) -> pd.DataFrame:
+        # newest first ?
+        # df = self._raw.loc[:, ::-1]
+        df = self._raw.loc[:]
+        df.insert(0, "|", ["|"] * len(df.index))
+        df.insert(0, "current", self.current().array)
+        return df
+
+    def to_string(self, *args, **kwargs) -> str:
+        return self._df_to_render().to_string(*args, **kwargs)
 
 
 if __name__ == "__main__":
-    ff = FlagsFrame.init_like(pd.Series([1, 2, 3]))
-    print(ff >= 2)
+    from saqc._testing import dtindex, N
+
+    s = pd.Series([1, 2, 3], index=dtindex(3))
+    ff = FlagsFrame(s.index)
+    ff.append([N, N, N])
+    print(ff)
+    ff.append(s)
+    ff.append(s.values)
     ff2 = ff.copy()
-    ff2.append([2, 2, 2])
+    ff2.append([N, N, N])
+    print(ff)
+    print(ff2)
     print(ff == ff2)
+    ff2.append([N, 99, N])
+    print(ff2)
+    print(ff == ff2)
+    print(FlagsFrame(ff2))

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import weakref
 from abc import ABC
-from typing import Any, Sequence
+from typing import Any, Sequence, cast, Callable
 
 import pandas as pd
 import numpy as np
@@ -11,13 +11,32 @@ import abc
 from saqc.constants import UNFLAGGED
 from saqc.core.flagsframe import FlagsFrame
 from saqc.core.generic import VariableABC
-from saqc.core.masking import MaskingContextManager
+from saqc.core.univariate import UnivariatDataFunc, UnivariatFlagFunc
 from saqc.types import Self
+
+
+def _cast_inplace(obj, klass):
+    _type = type(obj)
+    if _type is klass:
+        pass
+    if _type is Variable:
+        if klass is MaskedVariable:
+            obj.__class__ = klass
+            obj._orig = None
+            obj._mask = None
+    elif _type is MaskedVariable:
+        if klass is Variable:
+            obj.__class__ = klass
+            delattr(obj, '_orig')
+            delattr(obj, '_mask')
+    else:
+        raise NotImplementedError(f"Cannot cast from {_type} to {klass}")
+    return cast(klass, obj)
 
 
 class VariableBase(VariableABC):
     def __init__(
-        self, data, index: pd.Index | None = None, flags: FlagsFrame | None = None
+            self, data, index: pd.Index | None = None, flags: FlagsFrame | None = None
     ):
         if isinstance(data, self.__class__):  # fastpath
             self._data = data._data.copy()
@@ -36,6 +55,13 @@ class VariableBase(VariableABC):
             flags = self.data.index
         self._flags: FlagsFrame = FlagsFrame(flags)
 
+    @classmethod
+    def _from_other(cls, other: VariableBase) -> Variable:
+        inst = cls(None)
+        inst._data = other._data
+        inst._flags = other._flags
+        return cast(Variable, inst)
+
     @property
     def index(self):
         return self._data.index
@@ -52,24 +78,33 @@ class VariableBase(VariableABC):
     def flags(self) -> FlagsFrame:
         return self._flags
 
+    def is_flagged(self) -> pd.Series:
+        """return a boolean series that indicates flagged values"""
+        return self.flags.is_flagged()
+
     def copy(self, deep=True):
-        return self.__class__(data=self._data.copy(deep), flags=self._flags.copy(deep))
+        c = self.__class__(None)
+        c._data = self._data.copy(deep)
+        c._flags = self._flags.copy(deep)
+        return c
 
     def equals(self, other) -> bool:
         return (
-            isinstance(other, type(self))
-            and self.data.equals(other.data)
-            and self.flags.equals(other.flags)
+                isinstance(other, type(self))
+                and self.data.equals(other.data)
+                and self.flags.equals(other.flags)
         )
 
     def __eq__(self, other) -> bool:
         return self.equals(other)
 
-    def __repr__(self) -> str:
-        return repr(self._df_to_render()) + "\n"
+    def __repr__(self):
+        return repr(self._df_to_render()).replace("DataFrame", "Variable") + "\n"
 
     def _df_to_render(self) -> pd.DataFrame:
-        df = self.flags.raw.loc[:, ::-1]
+        # newest first ?
+        # df = self.flags.raw.loc[:, ::-1]
+        df = self.flags.raw.loc[:]
         df.insert(0, "|", ["|"] * len(df.index))
         df.insert(0, "flags", self.flags.current().array)
         df.insert(0, "data", self.data.array)
@@ -78,147 +113,86 @@ class VariableBase(VariableABC):
     def to_string(self, *args, **kwargs) -> str:
         return self._df_to_render().to_string(*args, **kwargs)
 
-
-class UnivariatFunctions(VariableABC, ABC):
-
-    def flag_limits(self: Variable, lower=-np.inf, upper=np.inf, flag=9) -> Variable:
-        result = self.copy(deep=False)
-        mask = (result.data < lower) | (result.data > upper)
-        result.flags.append_with_mask(mask, flag)
-        return result
-
-    def flag_something(self: Variable, flag=99) -> Variable:
-        result = self.copy(deep=False)
-        sample = result.data.sample(frac=0.3)
-        new = result.flags.template()
-        new[sample.index] = flag
-        result.flags.append(new)
-        return result
-
-    def clip(self: Variable, lower, upper, flag=-88) -> Variable:
-        # with data manipulation we must crate new Variable, not a copy
-        result = self.flag_limits(lower, upper).copy()
-        result.data.clip(lower, upper, inplace=True)
-        return Variable(result)
-
-    def flagna(self, flag=999):
-        result = self.copy(False)
-        meta = dict(source='flagna')
-        result.flags.append_with_mask(result.data.isna(), flag, meta)
-        return result
-
-    def interpolate(self: Variable, flag=None) -> Variable:
-        # with data manipulation we must crate
-        # new Variable, not a copy
-        meta = dict(source='interpolate')
-        if flag is not None:
-            flags = self.flagna().flags
-        else:
-            flags = self.flags
-        data = self.data.interpolate()
-        return Variable(data, flags)
-
-    def reindex(self: Variable, index=None, method=None) -> Variable:
-        data = self.data.reindex(index, method=method)
-        return Variable(data)
-
-    def flag_by_condition(self, func, flag=99):
-        # func ==> ``lambda v: v.data != 3``
-        new = self.copy()
-        mask = func(self.data)
-        new.flags.append_with_mask(mask, flag, dict(source='flag_by_condition'))
-        return new
-
-
-class Variable(VariableBase, UnivariatFunctions):
-    pass
-
-
-# Series: base for data storage
-# Variable has data-series and flags-series
-#   flags always as long as data
-#   can reindex and stuff
-# MaskedVariable has masked-data-series and flags series
-#   flags always as long as data
-#   only non index changing operations
-
-
-class Variable2:
-    def __init__(
-        self,
-        data: pd.Series,
-        flags: FlagsFrame | None = None,
-        attrs: dict | None = None,
-    ):
-        super().__init__()
-        self._data: pd.Series = data
-        if flags is None:
-            flags = FlagsFrame(
-                data=pd.DataFrame(np.nan, index=data.index, columns=[0], dtype=float),
-                meta=[dict()],
-            )
-        self._flags: FlagsFrame = flags
-        self.attrs: dict = attrs or dict()
-        assert isinstance(self._data, pd.Series)
-        assert isinstance(self._flags, FlagsFrame)
-        assert isinstance(self.attrs, dict)
-        self._validate()
-
-    data = property(lambda self: self._data)
-    flags = property(lambda self: self._flags)
-    index = property(lambda self: self._data.index)
-
-    def var_only_meth(self):
-        pass
-
-    def hide_data(self, mask=None):
+    def mask_data(self, mask=None, inplace=False) -> MaskedVariable:
         if mask is None:
-            mask = self.flags.current() > 0
-        else:
-            mask = pd.Series(mask)
+            mask = self.is_flagged()
+        inst: Variable = self if inplace else self.copy()
+        inst: MaskedVariable = _cast_inplace(inst, MaskedVariable)
+        inst._mask_data(mask)
+        return inst
+
+    @property
+    def is_masked(self):
+        return False
+
+
+class Variable(VariableBase, UnivariatFlagFunc):
+
+    @property
+    def _constructor(self: Variable) -> type[Variable]:
+        return self.__class__
+
+
+class MaskedVariable(Variable):
+
+    def __init__(
+            self,
+            data,
+            index: pd.Index | None = None,
+            flags: FlagsFrame | None = None,
+            mask: Any = None,
+    ):
+        super().__init__(data, index, flags)
+        self._orig = None
+        self._mask = None
+        if mask is not None:
+            self._mask_data(mask)
+
+    @classmethod
+    def _from_other(cls, other: VariableBase, mask=None) -> MaskedVariable:
+        inst = super()._from_other(other)
+        inst._orig = None
+        inst._mask = None
+        return cast(MaskedVariable, inst)
+
+    def _mask_data(self, mask) -> MaskedVariable:
+        """mask data inplace."""
+        mask = pd.Series(mask)  # cast and ensure shallow copy
+        assert len(mask) == len(self.index)
         self._orig = self._data.copy()
         self._mask = mask
         self._data[mask] = np.nan
         return self
 
-    def unhide_data(self):
+    @property
+    def is_masked(self):
+        if self._mask is None:
+            return False
+        return self.mask.any()
+
+    @property
+    def mask(self) -> pd.Series:
+        if self._mask is None:
+            return pd.Series(False, index=self.index, dtype=bool)
+        return self._mask.copy()
+
+    def mask_data(self, mask=None, **kwargs) -> MaskedVariable:
+        pass
+
+    def unmask_data(self):
         data = self._orig
         mask = self._mask
         data[mask] = self._data[mask]
         self._data = data
         return self
 
-    def foo666(self):
-        self.hide_data()
-        self.data[:] = 666
-        self.unhide_data()
-        return self
-
-    def copy(self) -> Variable:
-        return Variable(
-            data=self._data.copy(), flags=self._flags.copy(), attrs=dict(self.attrs)
-        ).__finalize__(self)
-
-    def _validate(self):
-        assert self._data.index.equals(self._flags.index)
-
-    def flagged(self) -> pd.Series:
-        return self.flags.current() > UNFLAGGED  # noqa
-
-    def __repr__(self) -> str:
-        df = self._data.to_frame("data")
-        df["final-flags"] = self.flags.current()
-        return repr(df) + "\n"
-
-    def dododo(self, arg0, arg1, kw0=None, kw1=None):
-        self.data[::2] = -self.data[::2]
-        return self
-
 
 if __name__ == "__main__":
-    N = np.nan
-    v = Variable()
-    v = v.flag_limits()
+    from saqc._testing import dtindex, N
+
+    m = MaskedVariable(None)
+
+    v = Variable([1, 2, 3, 4], index=dtindex(4))
+    v = v.flag_limits(2)
     v.flags.append(pd.Series([N, 5, 5, N]))
-    v.foo666()
     print(v)

@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 
-from typing import Any, TypeVar, Callable, Union
+from typing import Any, TypeVar, Callable, Union, TYPE_CHECKING
 
 try:
     from typing import Self
 except ImportError:
     Self = TypeVar("Self")
-
 
 import pandas as pd
 
@@ -18,9 +17,8 @@ import pandas as pd
 # It never takes a Variable and return a SaQC object.
 VarOrQcT = TypeVar("VarOrQcT", "Variable", "SaQC")
 
-FlagsFrameT = TypeVar("FlagsFrameT", bound='FlagsFrame')
-SupportsIndex = Union[pd.DataFrame, "Variable", FlagsFrameT]
-SupportsColumns = Union[pd.DataFrame, FlagsFrameT]
+SupportsIndex = Union[pd.DataFrame, "Variable", "FlagsFrame"]
+SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
 
 # to maintain type information across generic functions and parametrization
 T = TypeVar("T")

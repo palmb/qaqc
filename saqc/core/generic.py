@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from saqc.core.flagsframe import FlagsFrame
 
 from functools import wraps
-from saqc.types import F, T, Self, FlagsFrameT
+from saqc.types import F, T
 from abc import ABC, abstractmethod
 
 
@@ -25,6 +25,12 @@ def compose(target, func_name) -> F:
 
 
 class VariableABC(ABC):
+
+    @property
+    @abstractmethod
+    def _constructor(self: T) -> Callable[..., T]:
+        ...
+
     @property
     @abstractmethod
     def index(self: Variable) -> pd.Index:

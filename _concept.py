@@ -346,8 +346,8 @@ if __name__ == "__main__":
     df = df.interpolate().to_grid(infere_freq=True)
     df["bat(orig)"] = df["bat"].copy()
     df["bat"] = df["bat"].reindex(df["d"].index, method="ffill")
-    df["d"] = df["d"].flag_by_condition(lambda x: df["bat"].data < 10.2)
-    df = df.flag_by_condition(
+    df["d"] = df["d"].flag_generic(lambda x: df["bat"].data < 10.2)
+    df = df.flag_generic(
         lambda x: x["bat"].data < 10.1, flag=55, subset=["d", "bat"]
     )
     print(df)
