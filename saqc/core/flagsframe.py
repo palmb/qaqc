@@ -76,7 +76,7 @@ class FlagsFrame:
             result = self.raw.ffill(axis=1).iloc[:, -1]
         return result.fillna(UNFLAGGED)
 
-    def is_flagged(self) -> pd.Series:
+    def flagged(self) -> pd.Series:
         return self.current() > UNFLAGGED
 
     def template(self, fill_value=np.nan) -> pd.Series:

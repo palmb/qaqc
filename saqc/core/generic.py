@@ -5,11 +5,12 @@ import numpy as np
 from saqc.types import VarOrQcT
 from saqc.errors import ImplementationError
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 from typing import Callable
 
 if TYPE_CHECKING:
-    from saqc import Variable, SaQC
+    from saqc import SaQC
+    from saqc.core.variable import Variable, MaskedVariable
     from saqc.core.flagsframe import FlagsFrame
 
 from functools import wraps
@@ -25,7 +26,6 @@ def compose(target, func_name) -> F:
 
 
 class VariableABC(ABC):
-
     @property
     @abstractmethod
     def _constructor(self: T) -> Callable[..., T]:
@@ -52,6 +52,25 @@ class VariableABC(ABC):
 
     @abstractmethod
     def equals(self: Variable, other) -> bool:
+        ...
+
+    # ############################################################
+    # Masking
+    # ############################################################
+
+    @abstractmethod
+    def mask_data(
+        self: Variable | MaskedVariable, mask=None, inplace: bool = False
+    ) -> MaskedVariable:
+        ...
+
+    @abstractmethod
+    def unmask_data(self: Variable | MaskedVariable, inplace: bool = False) -> Variable:
+        ...
+
+    @property
+    @abstractmethod
+    def is_masked(self: Variable | MaskedVariable) -> bool:
         ...
 
 

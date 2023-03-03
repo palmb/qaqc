@@ -48,26 +48,34 @@ class UnivariatDataFunc(VariableABC, ABC):
 
 class UnivariatFlagFunc(VariableABC, ABC):
     def flag_limits(self: Variable, lower=-np.inf, upper=np.inf, flag=9) -> Variable:
-        result = self.copy(deep=False)
+        result = self.mask_data()
         mask = (result.data < lower) | (result.data > upper)
         result.flags.append_with_mask(mask, flag)
-        return result
+        return result.unmask_data()
 
     def flag_something(self: Variable, flag=99) -> Variable:
-        result = self.copy(deep=False)
-        sample = result.data.sample(frac=0.3)
+        result = self.mask_data()
+        sample = result.data.dropna().sample(frac=0.3)
         new = result.flags.template()
         new[sample.index] = flag
         result.flags.append(new)
-        return result
+        return result.unmask_data()
 
-    def flagna(self, flag=999):
-        result = self.copy(False)
+    def flagna(self: Variable, flag=999) -> Variable:
+        # no masking desired !
+        result = self.copy()
         meta = dict(source="flagna")
         result.flags.append_with_mask(result.data.isna(), flag, meta)
         return result
 
-    def flag_generic(self, func, flag=99):
+    def replace_flag(self: Variable, old, new):
+        # no masking needed
+        result = self.copy()
+        mask = self.flags.current() == old
+        result.flags.append_with_mask(mask, new, dict(source="replace_flag"))
+        return result
+
+    def flag_generic(self: Variable, func, flag=99) -> Variable:
         # func ==> ``lambda v: v.data != 3``
         new = self.copy()
         mask = func(self.data)

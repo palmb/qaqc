@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import weakref
 from abc import ABC
-from typing import Any, Sequence, cast, Callable
+from typing import Any, Sequence, cast, Callable, NoReturn, final
 
 import pandas as pd
 import numpy as np
@@ -27,16 +27,16 @@ def _cast_inplace(obj, klass):
     elif _type is MaskedVariable:
         if klass is Variable:
             obj.__class__ = klass
-            delattr(obj, '_orig')
-            delattr(obj, '_mask')
+            delattr(obj, "_orig")
+            delattr(obj, "_mask")
     else:
         raise NotImplementedError(f"Cannot cast from {_type} to {klass}")
     return cast(klass, obj)
 
 
-class VariableBase(VariableABC):
+class VariableBase(VariableABC, ABC):
     def __init__(
-            self, data, index: pd.Index | None = None, flags: FlagsFrame | None = None
+        self, data, index: pd.Index | None = None, flags: FlagsFrame | None = None
     ):
         if isinstance(data, self.__class__):  # fastpath
             self._data = data._data.copy()
@@ -55,13 +55,6 @@ class VariableBase(VariableABC):
             flags = self.data.index
         self._flags: FlagsFrame = FlagsFrame(flags)
 
-    @classmethod
-    def _from_other(cls, other: VariableBase) -> Variable:
-        inst = cls(None)
-        inst._data = other._data
-        inst._flags = other._flags
-        return cast(Variable, inst)
-
     @property
     def index(self):
         return self._data.index
@@ -78,9 +71,9 @@ class VariableBase(VariableABC):
     def flags(self) -> FlagsFrame:
         return self._flags
 
-    def is_flagged(self) -> pd.Series:
+    def flagged(self) -> pd.Series:
         """return a boolean series that indicates flagged values"""
-        return self.flags.is_flagged()
+        return self.flags.flagged()
 
     def copy(self, deep=True):
         c = self.__class__(None)
@@ -90,16 +83,45 @@ class VariableBase(VariableABC):
 
     def equals(self, other) -> bool:
         return (
-                isinstance(other, type(self))
-                and self.data.equals(other.data)
-                and self.flags.equals(other.flags)
+            isinstance(other, type(self))
+            and self.data.equals(other.data)
+            and self.flags.equals(other.flags)
         )
 
     def __eq__(self, other) -> bool:
         return self.equals(other)
 
+    # ############################################################
+    # Masking
+    # ############################################################
+
+    def mask_data(self, mask=None, inplace=False) -> MaskedVariable:
+        if mask is None:
+            mask = self.flagged()
+        else:
+            mask = pd.Series(mask, index=self.index, dtype=bool)
+        inst: Variable = self if inplace else self.copy()
+        inst: MaskedVariable = _cast_inplace(inst, MaskedVariable)
+        inst._mask_data(mask)
+        return inst
+
+    def unmask_data(self, inplace=False) -> Variable:
+        return self if inplace else self.copy()
+
+    @property
+    def is_masked(self):
+        return False
+
+    # ############################################################
+    # Rendering
+    # ############################################################
+
+    @final
     def __repr__(self):
-        return repr(self._df_to_render()).replace("DataFrame", "Variable") + "\n"
+        return (
+            repr(self._df_to_render()).replace("DataFrame", self.__class__.__name__)
+            + "\n"
+        )
 
     def _df_to_render(self) -> pd.DataFrame:
         # newest first ?
@@ -110,37 +132,32 @@ class VariableBase(VariableABC):
         df.insert(0, "data", self.data.array)
         return df
 
+    @final
     def to_string(self, *args, **kwargs) -> str:
-        return self._df_to_render().to_string(*args, **kwargs)
-
-    def mask_data(self, mask=None, inplace=False) -> MaskedVariable:
-        if mask is None:
-            mask = self.is_flagged()
-        inst: Variable = self if inplace else self.copy()
-        inst: MaskedVariable = _cast_inplace(inst, MaskedVariable)
-        inst._mask_data(mask)
-        return inst
-
-    @property
-    def is_masked(self):
-        return False
+        return (
+            self._df_to_render()
+            .replace("DataFrame", self.__class__.__name__)
+            .to_string(*args, **kwargs)
+        )
 
 
 class Variable(VariableBase, UnivariatFlagFunc):
-
     @property
     def _constructor(self: Variable) -> type[Variable]:
         return self.__class__
 
 
 class MaskedVariable(Variable):
+    @property
+    def _constructor(self: MaskedVariable) -> type[MaskedVariable]:
+        return self.__class__
 
     def __init__(
-            self,
-            data,
-            index: pd.Index | None = None,
-            flags: FlagsFrame | None = None,
-            mask: Any = None,
+        self,
+        data,
+        index: pd.Index | None = None,
+        flags: FlagsFrame | None = None,
+        mask: Any = None,
     ):
         super().__init__(data, index, flags)
         self._orig = None
@@ -148,12 +165,29 @@ class MaskedVariable(Variable):
         if mask is not None:
             self._mask_data(mask)
 
-    @classmethod
-    def _from_other(cls, other: VariableBase, mask=None) -> MaskedVariable:
-        inst = super()._from_other(other)
-        inst._orig = None
-        inst._mask = None
-        return cast(MaskedVariable, inst)
+    def copy(self, deep=True) -> MaskedVariable:
+        c = cast(MaskedVariable, super().copy(deep))
+        if self._orig is not None:
+            c._orig = self._orig.copy(deep)
+        if self._mask is not None:
+            c._mask = self._mask.copy(deep)
+        return c
+
+    @property
+    def is_masked(self):
+        return self._mask is not None and self.mask.any()
+
+    @property
+    def mask(self) -> pd.Series:
+        if self._mask is None:
+            return pd.Series(False, index=self.index, dtype=bool)
+        return self._mask.copy()
+
+    @mask.setter
+    def mask(self, value):
+        mask = pd.Series(value, index=self.index, dtype=bool)
+        self._unmask_data()
+        self._mask_data(mask)
 
     def _mask_data(self, mask) -> MaskedVariable:
         """mask data inplace."""
@@ -164,35 +198,59 @@ class MaskedVariable(Variable):
         self._data[mask] = np.nan
         return self
 
-    @property
-    def is_masked(self):
-        if self._mask is None:
-            return False
-        return self.mask.any()
-
-    @property
-    def mask(self) -> pd.Series:
-        if self._mask is None:
-            return pd.Series(False, index=self.index, dtype=bool)
-        return self._mask.copy()
-
-    def mask_data(self, mask=None, **kwargs) -> MaskedVariable:
-        pass
-
-    def unmask_data(self):
-        data = self._orig
-        mask = self._mask
-        data[mask] = self._data[mask]
-        self._data = data
+    def _unmask_data(self) -> MaskedVariable:
+        self._data = self._orig
+        self._mask = None
+        self._orig = None
         return self
+
+    def mask_data(self, mask=None, inplace=False) -> MaskedVariable:
+        if mask is None:
+            mask = self.flagged()
+        else:
+            mask = pd.Series(mask, index=self.index, dtype=bool)
+        c = self.copy()
+        c._unmask_data()
+        c._mask_data(mask)
+        if inplace:
+            self._orig = c._orig
+            self._mask = c._mask
+            self._data = c._data
+            c = self
+        return c
+
+    def unmask_data(self, inplace=True) -> Variable:
+        obj: MaskedVariable = self if inplace else self.copy()
+        obj._unmask_data()
+        obj: Variable = _cast_inplace(obj, Variable)
+        return obj
+
+    # ############################################################
+    # Rendering
+    # ############################################################
+
+    def _df_to_render(self) -> pd.DataFrame:
+        df = super()._df_to_render()
+        df.insert(1, "mask", self.mask.array)
+        return df
 
 
 if __name__ == "__main__":
     from saqc._testing import dtindex, N
 
-    m = MaskedVariable(None)
+    print(Variable(None))
+    print(MaskedVariable(None))
 
     v = Variable([1, 2, 3, 4], index=dtindex(4))
     v = v.flag_limits(2)
     v.flags.append(pd.Series([N, 5, 5, N]))
+    v = v.mask_data(inplace=True)
+    print(v)
+    new = Variable(v)
+    print(new)
+    v = v.mask_data(mask=True, inplace=True)
+    print(v)
+    v._data[:] = 99
+    print(v)
+    v.unmask_data(inplace=True)
     print(v)
