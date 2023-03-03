@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from saqc.core.generic import compose
 from copy import deepcopy
-from saqc.types import Any, SupportsIndex
+from saqc._typing import Any, SupportsIndex
 from saqc.constants import UNFLAGGED
 from typing import Any, Callable, Dict, List, Tuple, cast
 

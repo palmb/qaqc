@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from copy import deepcopy
-from saqc.types import Any, SupportsIndex
+from saqc._typing import Any, SupportsIndex
 from saqc.constants import UNFLAGGED
 
 

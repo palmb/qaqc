@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pandas as pd
 import numpy as np
-from saqc.types import VarOrQcT
+from saqc._typing import VarOrQcT
 from saqc.errors import ImplementationError
 
 from typing import TYPE_CHECKING, overload
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from saqc.core.flagsframe import FlagsFrame
 
 from functools import wraps
-from saqc.types import F, T
+from saqc._typing import F, T, VariableT
 from abc import ABC, abstractmethod
 
 
@@ -26,6 +26,7 @@ def compose(target, func_name) -> F:
 
 
 class VariableABC(ABC):
+
     @property
     @abstractmethod
     def _constructor(self: T) -> Callable[..., T]:
@@ -33,7 +34,7 @@ class VariableABC(ABC):
 
     @property
     @abstractmethod
-    def index(self: Variable) -> pd.Index:
+    def index(self: VariableT) -> pd.Index:
         ...
 
     @property
@@ -47,7 +48,7 @@ class VariableABC(ABC):
         ...
 
     @abstractmethod
-    def copy(self: Variable, deep: bool = True) -> Variable:
+    def copy(self: VariableT, deep: bool = True) -> VariableT:
         ...
 
     @abstractmethod

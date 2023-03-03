@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import weakref
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Any, Sequence, cast, Callable, NoReturn, final
 
 import pandas as pd
@@ -11,30 +11,15 @@ import abc
 from saqc.constants import UNFLAGGED
 from saqc.core.flagsframe import FlagsFrame
 from saqc.core.generic import VariableABC
-from saqc.core.univariate import UnivariatDataFunc, UnivariatFlagFunc
-from saqc.types import Self
+from saqc._typing import VariableT
 
 
-def _cast_inplace(obj, klass):
-    _type = type(obj)
-    if _type is klass:
-        pass
-    if _type is Variable:
-        if klass is MaskedVariable:
-            obj.__class__ = klass
-            obj._orig = None
-            obj._mask = None
-    elif _type is MaskedVariable:
-        if klass is Variable:
-            obj.__class__ = klass
-            delattr(obj, "_orig")
-            delattr(obj, "_mask")
-    else:
-        raise NotImplementedError(f"Cannot cast from {_type} to {klass}")
-    return cast(klass, obj)
+class BaseVariable:
+    @property
+    @abstractmethod
+    def _constructor(self: VariableT) -> type[VariableT]:
+        ...
 
-
-class VariableBase(VariableABC, ABC):
     def __init__(
         self, data, index: pd.Index | None = None, flags: FlagsFrame | None = None
     ):
@@ -56,7 +41,7 @@ class VariableBase(VariableABC, ABC):
         self._flags: FlagsFrame = FlagsFrame(flags)
 
     @property
-    def index(self):
+    def index(self) -> pd.Index:
         return self._data.index
 
     @index.setter
@@ -75,13 +60,13 @@ class VariableBase(VariableABC, ABC):
         """return a boolean series that indicates flagged values"""
         return self.flags.flagged()
 
-    def copy(self, deep=True):
+    def copy(self: VariableT, deep: bool = True) -> VariableT:
         c = self.__class__(None)
         c._data = self._data.copy(deep)
         c._flags = self._flags.copy(deep)
         return c
 
-    def equals(self, other) -> bool:
+    def equals(self, other: Any) -> bool:
         return (
             isinstance(other, type(self))
             and self.data.equals(other.data)
@@ -89,13 +74,14 @@ class VariableBase(VariableABC, ABC):
         )
 
     def __eq__(self, other) -> bool:
+        # todo ??
         return self.equals(other)
 
     # ############################################################
     # Masking
     # ############################################################
 
-    def mask_data(self, mask=None, inplace=False) -> MaskedVariable:
+    def mask_data(self: VariableT, mask=None, inplace: bool = False) -> MaskedVariable:
         if mask is None:
             mask = self.flagged()
         else:
@@ -105,11 +91,11 @@ class VariableBase(VariableABC, ABC):
         inst._mask_data(mask)
         return inst
 
-    def unmask_data(self, inplace=False) -> Variable:
+    def unmask_data(self: VariableT, inplace=False) -> Variable:
         return self if inplace else self.copy()
 
     @property
-    def is_masked(self):
+    def is_masked(self: VariableT) -> bool:
         return False
 
     # ############################################################
@@ -117,7 +103,7 @@ class VariableBase(VariableABC, ABC):
     # ############################################################
 
     @final
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             repr(self._df_to_render()).replace("DataFrame", self.__class__.__name__)
             + "\n"
@@ -141,17 +127,17 @@ class VariableBase(VariableABC, ABC):
         )
 
 
-class Variable(VariableBase, UnivariatFlagFunc):
+import saqc.core.univariate as _univ  # noqa
+
+
+class Variable(_univ.UnivariateMixin, BaseVariable):  # noqa
     @property
-    def _constructor(self: Variable) -> type[Variable]:
+    def _constructor(self: VariableT) -> type[VariableT]:
         return self.__class__
 
 
 class MaskedVariable(Variable):
-    @property
-    def _constructor(self: MaskedVariable) -> type[MaskedVariable]:
-        return self.__class__
-
+    # todo: add this to BaseVariable ??? to simplify ??
     def __init__(
         self,
         data,
@@ -166,15 +152,15 @@ class MaskedVariable(Variable):
             self._mask_data(mask)
 
     def copy(self, deep=True) -> MaskedVariable:
-        c = cast(MaskedVariable, super().copy(deep))
+        c = super().copy(deep)
         if self._orig is not None:
             c._orig = self._orig.copy(deep)
         if self._mask is not None:
             c._mask = self._mask.copy(deep)
-        return c
+        return cast(MaskedVariable, c)
 
     @property
-    def is_masked(self):
+    def is_masked(self) -> bool:
         return self._mask is not None and self.mask.any()
 
     @property
@@ -235,8 +221,28 @@ class MaskedVariable(Variable):
         return df
 
 
+def _cast_inplace(obj: BaseVariable, klass) -> MaskedVariable | Variable:
+    _type = type(obj)
+    if _type is klass:
+        pass
+    if _type is Variable:
+        if klass is MaskedVariable:
+            obj.__class__ = klass
+            obj._orig = None
+            obj._mask = None
+    elif _type is MaskedVariable:
+        if klass is Variable:
+            obj.__class__ = klass
+            delattr(obj, "_orig")
+            delattr(obj, "_mask")
+    else:
+        raise NotImplementedError(f"Cannot cast from {_type} to {klass}")
+    return cast(klass, obj)
+
+
 if __name__ == "__main__":
     from saqc._testing import dtindex, N
+    from saqc.core.variable import Variable
 
     print(Variable(None))
     print(MaskedVariable(None))

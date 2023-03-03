@@ -11,6 +11,10 @@ except ImportError:
 
 import pandas as pd
 
+if TYPE_CHECKING:
+    from saqc.core.variable import Variable, MaskedVariable, BaseVariable
+
+
 # Either Variable or SaQC not the Union of both,
 # that mean tha a function defined like this `foo(a: VarOrQcT) -> VarOrQcT`
 # returns an object of the same type as `a` is.
@@ -19,6 +23,12 @@ VarOrQcT = TypeVar("VarOrQcT", "Variable", "SaQC")
 
 SupportsIndex = Union[pd.DataFrame, "Variable", "FlagsFrame"]
 SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
+
+# VariableT is stricter and ensures that the same subclass of Variable always is
+# used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a
+# MaskedVariable is passed into a function, a MaskedVariable is always
+# returned and if a Variable is passed in, a Variable is always returned.
+VariableT = TypeVar("VariableT", bound="BaseVariable")
 
 # to maintain type information across generic functions and parametrization
 T = TypeVar("T")
