@@ -5,12 +5,17 @@ import pandas as pd
 import numpy as np
 from saqc.core.generic import compose
 from copy import deepcopy
-from saqc._typing import Any, SupportsIndex
+from saqc._typing import SupportsIndex
 from saqc.constants import UNFLAGGED
-from typing import Any, Callable, Dict, List, Tuple, cast
+from typing import Any
+# from pandas.core.arraylike import OpsMixin
 
 
 class FlagsFrame:
+
+    __slots__ = ('_raw', "_meta")
+    _raw: pd.DataFrame
+    _meta: list[dict[str, Any]]
 
     """
     Formerly known as History
@@ -20,22 +25,36 @@ class FlagsFrame:
     - comparable eq, ne, le, ge, lt, gt return pd.Dataframes
     """
 
-    def __init__(self, initial: SupportsIndex | pd.Index) -> None:
-        if isinstance(initial, pd.Index):
-            index = initial
-        elif hasattr(initial, "index") and isinstance(initial.index, pd.Index):
-            index = initial.index
+    def __init__(self, index: Any = None, initial: SupportsIndex | None = None) -> None:
+        if index is None:
+            if hasattr(initial, "index") and isinstance(initial.index, pd.Index):
+                index = initial.index
+            else:
+                raise TypeError(
+                    "If no 'index' is given, 'initial' must "
+                    "have a pandas.Index."
+                )
+
+        # special case:  FlagsFrame(flags_frame)
+        elif isinstance(index, type(self)):
+            initial = index.current()
+            index = index.index
         else:
-            raise TypeError("Not an pd.Index, nor supports index")
+            try:
+                index = pd.Index(index)
+            except TypeError:
+                raise TypeError(f"Cannot create index for from {type(index)}")
+
+        index.name = None
+
+        if isinstance(initial, type(self)):
+            initial = initial.current()
 
         self._raw = pd.DataFrame(index=index, dtype=float)
         self._meta = []
 
-        if isinstance(initial, pd.Index):
-            return
-        if isinstance(initial, self.__class__):
-            initial = initial.current()
-        self.append(initial)
+        if initial is not None:
+            self.append(initial, dict(source='init'))
 
     @property
     def raw(self) -> pd.DataFrame:

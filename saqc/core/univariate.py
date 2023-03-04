@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
-from saqc.core.variable import BaseVariable
+from saqc.core.base import BaseVariable
 from abc import ABC
 from saqc._typing import VariableT
 

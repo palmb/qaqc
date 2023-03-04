@@ -1,167 +1,135 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import warnings
+from abc import ABC
+
 import numpy as np
-import weakref
-import abc
-
-from typing import TYPE_CHECKING, TypeVar
-if TYPE_CHECKING:
-    from saqc.core.variable import Variable
-
-T = TypeVar('T')
+import pandas as pd
+from typing import Any, cast
+from saqc._typing import Scalar, VariableT
+from saqc.core.base import BaseVariable
+from saqc.core.flagsframe import FlagsFrame
 
 
-class MaskingContextManager:
-    def __init__(self, obj: Variable, invert=False):
-        self._obj: Variable = obj
-        self._invert = invert
-        self._orig = None
-        self._mask = None
-        self._kwargs = {}
-        # We need to keep track of copies that are made
-        # in our context. On exit of our context we call
-        # unmasking with each created copy.
-        self._refs = weakref.WeakSet()
+class _Mask:
+    def __init__(
+            self,
+            data: pd.Series | None = None,
+            mask: pd.Series | bool | list[bool] | None = None,
+            fill_value: float = np.nan,
+    ):
+        if data is None and mask is not None:
+            raise ValueError(
+                "Cannot create from mask only. data must not "
+                "be None or both of mask and data must be None."
+            )
+        if isinstance(data, pd.Series):
+            data = data.copy()
+        if mask is not None:
+            mask = pd.Series(mask, index=data.index, dtype=bool)
+        self.data = data
+        self.mask = mask
+        self.fill_value = fill_value
 
-    # arguments to `with obj.masking(mask=...) as masked: ...`
-    def __call__(self, mask=None, **kwargs) -> MaskingContextManager:
-        self._mask = self._obj.flagged() if mask is None else mask
-        if self._invert:
-            self._mask = ~self._mask
-        self._kwargs = kwargs
-        return self
+    def copy(self, deep):
+        c = _Mask()
+        if self.data is not None:
+            c.data = self.data.copy(deep)
+        if self.mask is not None:
+            c.mask = self.mask.copy(deep)
+        c.fill_value = self.fill_value
+        return c
 
-    def __enter__(self) -> Variable:
-        self._orig = self._obj.data.copy()
-        self._obj.data[self._mask] = np.nan
-        return self._obj
+    @property
+    def _has_mask(self) -> bool:
+        return self.mask is not None
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._unmask(self._obj)
-        self._unmask_copies()
-        return None
+    @property
+    def has_data(self) -> bool:
+        return self.data is not None
 
-    def _unmask_copies(self):
-        for _ in range(len(self._refs)):
-            obj = self._refs.pop()
-            self._unmask(obj)
-
-    def _unmask(self, obj):
-        obj.data[self._mask] = self._orig[self._mask]
-        return obj
-
-    # ############################################################
-    # Public API
-    # ############################################################
-
-    def mask(self, mask=None) -> Variable:
-        """Store and reset data at mask until unmask is called."""
-        return self.__call__(mask).__enter__()
-
-    def unmask(self) -> Variable:
-        """Restore original data to previously masked locations."""
-        return self._unmask(self._obj)
-
-    def register(self, obj: Variable):
-        """register a new object for unmasking on exit."""
-        assert obj.data.index.equals(self._orig.index)
-        self._refs.add(obj)
-
-    def copy(self, obj) -> MaskingContextManager:
-        assert obj.data.index.equals(self._orig.index)
-        new = MaskingContextManager(obj, invert=self._invert)
-        new._orig = self._orig
-        new._mask = self._mask
-        new._kwargs = self._kwargs
-        # do not copy self.refs
-        return new
-
-
-class _MaskingMixin(abc.ABC):
-    def __init__(self, *args, **kwargs):
-        # context manager for use with `with`-statement
-        # we hold a list to allow nested `with`-statements
-        self._cms: weakref.WeakSet[MaskingContextManager] = weakref.WeakSet()
-        # context manager for direct calls to `mask` and `unmask`
-        self._cm: MaskingContextManager | None = None
-
-    @abc.abstractmethod
-    def copy(self: T) -> T:
-        ...
-
-    def __finalize__(self: T, obj) -> T:
-        # self is new, obj is old
-        if obj._cm is not None:
-            self._cm = obj._cm.copy(self)
-
-        self._cms = obj._cms.copy()
-        for cm in obj._cms:
-            cm.register(self)
-        return self
+    def __bool__(self) -> bool:
+        return self.has_data
 
     @property
     def is_masked(self) -> bool:
-        # todo: check if weakref.WeakSet works as expected in
-        #   any case
-        return not (self._cm is None or len(self._cms) == 0)
+        return self.has_data and self._has_mask and self.mask.any()
 
-    # ############################################################
-    # with statement context manager
-    # ############################################################
+    def get_mask(self) -> pd.Series | None:
+        if self._has_mask:
+            return self.mask.copy()
+        return None
+
+    def get_masked_data(self) -> pd.Series:
+        if not self.has_data:
+            raise RuntimeError("No data to mask")
+        data = self.data.copy()
+        if self.is_masked:
+            data[self.mask] = self.fill_value
+        return data
+
+    def get_original_data(self) -> pd.Series:
+        return self.data
+
+
+class MaskingMixin(BaseVariable, ABC):
+    def __init__(self, *args, mask=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._mask: _Mask = _Mask()
+        if mask is not None:
+            self._mask_data(mask)
+
+    def copy(self: MaskingMixin, deep: bool = True) -> MaskingMixin:
+        c = super().copy(deep)
+        c._mask = self._mask.copy(deep)
+        return cast(MaskingMixin, c)
 
     @property
-    def selecting(self) -> MaskingContextManager:
-        new = self.copy()
-        cm = MaskingContextManager(new, invert=True)
-        new._cms.add(cm)
-        return cm
+    def is_masked(self) -> bool:
+        return self._mask.is_masked
 
     @property
-    def masking(self) -> MaskingContextManager:
-        new = self.copy()
-        cm = MaskingContextManager(new)
-        new._cms.add(cm)
-        return cm
+    def data_mask(self) -> pd.Series | None:
+        return self._mask.get_mask()
 
-    # ############################################################
-    # method interface
-    # ############################################################
-
-    def _mask_or_select(self: T, mask=None, invert=False) -> T:
-        if self._cm is not None:
-            raise RuntimeError(
-                "Data is already masked or selected. For mixing or nesting "
-                "masks and/or selections use the contextmanager `masking` "
-                "and `selecting` with the `with` statement. "
-            )
-        self._cm = MaskingContextManager(self, invert=invert)
-        return self._cm.mask(mask)
-
-    def _undo(self: T, action: str) -> T:
-        if self._cm is None:
-            raise RuntimeError(f"Data is not {action}ed.")
-        assert self._cm._obj is self
-        self._cm.unmask()
-        self._cm = None  # destroy reference
+    def _mask_data(self, mask) -> MaskingMixin:
+        self._mask = _Mask(self._data, mask)
+        self._data = self._mask.get_masked_data()
         return self
 
-    def mask(self: T, mask=None, copy=False) -> T:
-        obj = self.copy() if copy else self
-        return obj._mask_or_select(mask=mask)
+    def mask_data(self, mask=None, inplace: bool = False) -> MaskingMixin:
+        obj = self if inplace else self.copy()
+        if obj.is_masked:
+            warnings.warn("Variable is already masked, the old mask will be discarded")
+            obj = obj.unmask_data(inplace=inplace)
+        if mask is None:
+            mask = obj.flagged()
+        return obj._mask_data(mask)
 
-    def select(self: T, sel=None, copy=False) -> T:
-        obj = self.copy() if copy else self
-        return obj._mask_or_select(mask=sel, invert=True)
+    def unmask_data(self, inplace: bool = False) -> MaskingMixin:
+        obj = self if inplace else self.copy()
+        if obj.is_masked:
+            obj._data = obj._mask.get_original_data()
+            obj._mask = _Mask()
+        return obj
 
-    def unmask(self: T, copy=False) -> T:
-        obj = self.copy() if copy else self
-        return obj._undo("mask")
-
-    def deselect(self: T, copy=False) -> T:
-        obj = self.copy() if copy else self
-        return obj._undo("select")
+    def _df_to_render(self) -> pd.DataFrame:
+        df = super()._df_to_render()
+        if self.is_masked:
+            df.insert(1, "mask", self._mask.get_masked_data())
+        return df
 
 
+if __name__ == '__main__':
 
+    class Variable(MaskingMixin):
+        def __init__(self, data, index=None, flags=None, mask=None):
+            super().__init__(data=data, index=index, flags=flags, mask=mask)
 
+        @property
+        def _constructor(self: VariableT) -> type[VariableT]:
+            return type(self)
+
+    mv = Variable([1,3,4])
+    mv = mv.copy()

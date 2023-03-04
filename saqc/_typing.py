@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-from typing import Any, TypeVar, Callable, Union, TYPE_CHECKING
+from typing import Any, TypeVar, Callable, Union, TYPE_CHECKING, final
 
 try:
     from typing import Self
@@ -12,7 +12,8 @@ except ImportError:
 import pandas as pd
 
 if TYPE_CHECKING:
-    from saqc.core.variable import Variable, MaskedVariable, BaseVariable
+    from saqc.core.base import BaseVariable
+    from saqc.core.variable import Variable
 
 
 # Either Variable or SaQC not the Union of both,
@@ -23,6 +24,8 @@ VarOrQcT = TypeVar("VarOrQcT", "Variable", "SaQC")
 
 SupportsIndex = Union[pd.DataFrame, "Variable", "FlagsFrame"]
 SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
+Scalar = Union[int, float, str, complex]
+MaskLike = Union[pd.Series | bool | list[bool]]
 
 # VariableT is stricter and ensures that the same subclass of Variable always is
 # used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a
@@ -37,4 +40,3 @@ T = TypeVar("T")
 # see https://mypy.readthedocs.io/en/stable/generics.html#declaring-decorators
 FuncType = Callable[..., Any]
 F = TypeVar("F", bound=FuncType)
-
