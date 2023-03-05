@@ -102,15 +102,12 @@ class FlagsFrame:
             result = self.raw.ffill(axis=1).iloc[:, -1]
         return result.fillna(UNFLAGGED)
 
-    def flagged(self, lower: float = -np.inf, upper: float = np.inf) -> pd.Series:
-        data = self.current()
-        if lower == -np.inf:
-            result = data > lower
-        else:
-            result = data >= lower
-        if upper < np.inf:
-            result &= data < upper
-        return result
+    def is_flagged(self, current: bool = True) -> pd.Series | pd.DataFrame:
+        flags = self.current() if current else self.raw
+        return flags > UNFLAGGED
+
+    def is_unflagged(self, current: bool = True) -> pd.Series | pd.DataFrame:
+        return ~self.is_flagged(current=current)
 
     def template(self, fill_value=np.nan) -> pd.Series:
         return pd.Series(fill_value, index=self.index, dtype=float)
@@ -129,8 +126,12 @@ class FlagsFrame:
         self._meta[col] = meta
         return self
 
-    def equals(self, other: FlagsFrame) -> bool:
-        return isinstance(other, self.__class__) and self._raw.equals(other._raw)
+    def equals(self, other: FlagsFrame | pd.Series, current=True) -> bool:
+        if current:
+            if isinstance(other, type(self)):
+                other = other.current()
+            return isinstance(other, pd.Series) and self.current().equals(other)
+        return isinstance(other, type(self)) and self._raw.equals(other._raw)
 
     def __len__(self):
         return len(self._raw.columns)

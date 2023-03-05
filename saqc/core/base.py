@@ -6,10 +6,11 @@ import pandas as pd
 import numpy as np
 from numpy.ma import MaskedArray
 
-from saqc._typing import VariableT, final, MaskLike, Numeric
-from typing import Any, overload, Iterable, Collection
+from saqc._typing import VariableT, final, MaskLike, MaskerT
+from typing import Any, overload, Iterable, Collection, Callable, Union
 from saqc.core.flagsframe import FlagsFrame
 from saqc.constants import UNFLAGGED
+from saqc.errors import ImplementationError
 
 
 class _Data:
@@ -70,8 +71,12 @@ class _Data:
         self._raw.mask = value
 
     @property
-    def series(self) -> pd.Series:
+    def masked_series(self) -> pd.Series:
         return pd.Series(self._raw.filled(), self._index, dtype=float, copy=True)
+
+    @property
+    def orig_series(self) -> pd.Series:
+        return pd.Series(self._raw.data, self._index, dtype=float, copy=True)
 
     @property
     def index(self) -> pd.Index:
@@ -91,11 +96,17 @@ class _Data:
     def fill_value(self, value: float):
         self._raw.fill_value = value
 
+    def __len__(self):
+        return len(self._raw)
+
 
 class BaseVariable:
     _data: _Data
     _flags: FlagsFrame
     _thresh: tuple[float, float]
+    _masker: MaskerT | None
+    _masker_takes_raw: bool
+    global_masker: MaskerT | None = None
 
     @property
     @abstractmethod
@@ -125,6 +136,8 @@ class BaseVariable:
         self._data = data
         self._flags = flags
         self._thresh = (-np.inf, np.inf)
+        self._masker = None
+        self._masker_takes_raw = False
 
     def copy(self: VariableT, deep: bool = True) -> VariableT:
         cls = self.__class__
@@ -132,6 +145,8 @@ class BaseVariable:
         c._data = self._data.copy(deep)
         c._flags = self._flags.copy(deep)
         c._thresh = self._thresh
+        c._masker = self._masker
+        c._masker_takes_raw = self._masker_takes_raw
         return c
 
     @property
@@ -143,63 +158,21 @@ class BaseVariable:
         self._data.index = value
 
     @property
+    def orig(self) -> pd.Series:
+        return self._data.orig_series
+
+
+    @property
     def data(self) -> pd.Series:
-        return self._data.series
+        return self._data.masked_series
 
     @property
     def flags(self) -> FlagsFrame:
         return self._flags
 
-    @property
-    def mask(self) -> np.ndarray:
-        return self._data.mask
-
-    @mask.setter
-    def mask(self, value):
-        self._data._raw.soften_mask()
-        self._data.mask = value
-        self._data._raw.harden_mask()
-
-    @property
-    def is_masked(self):
-        return self._data.mask.any()
-
-    @property
-    def masking_threshold(self) -> tuple[float, float]:
-        return self._thresh
-
-    @masking_threshold.setter
-    def masking_threshold(self, value: Numeric | Collection[Numeric, Numeric]):
-        if isinstance(value, Numeric):
-            value = (value, np.inf)
-        if isinstance(value, Collection) and len(value) == 2:
-            self._thresh = tuple(map(float, value))  # noqa
-        else:
-            raise TypeError("Expect one or two values of type int or float")
-
-    @overload
-    def mask_data(self, mask: MaskLike | None = None, **kwargs) -> BaseVariable:
-        ...
-
-    @overload
-    def mask_data(
-        self, lower: float = UNFLAGGED, upper: float = np.inf
-    ) -> BaseVariable:
-        ...
-
-    def mask_data(self, *args, **kwargs) -> BaseVariable:
-        lower = -np.inf
-        upper = np.inf
-        self.mask = self.flagged(lower, upper)
-        return self
-
-    def unmask_data(self) -> BaseVariable:
-        self.mask = False
-        return self
-
     def flagged(self, lower: float = UNFLAGGED, upper: float = np.inf) -> pd.Series:
         """return a boolean series that indicates flagged values"""
-        return self.flags.flagged(lower, upper)
+        return self.flags.is_flagged()
 
     def equals(self, other: Any) -> bool:
         return (
@@ -213,6 +186,88 @@ class BaseVariable:
         return self.equals(other)
 
     # ############################################################
+    # Masker
+    # ############################################################
+
+    def _masker_default(self) -> np.ndarray:
+        return self.flags.current().to_numpy() > UNFLAGGED
+
+    @classmethod
+    def set_masker_global(cls, func: MaskerT, raw=False):
+        assert callable(func)
+        name = "create_mask_raw" if raw else "create_mask"
+        setattr(cls, name, staticmethod(func))
+
+    def set_masker(self, func: MaskerT, raw=False):
+        assert callable(func)
+        name = "create_mask_raw" if raw else "create_mask"
+        setattr(self, name, func)
+
+    @staticmethod
+    def _run_and_check_masker(
+            masker: MaskerT, flags: pd.Series | np.ndarray, rtype, index
+    ):
+        func_name = masker.__name__
+        try:
+            result = masker(flags)
+        except Exception as e:
+            raise RuntimeError(f"Execution of {func_name} failed.") from e
+
+        if not isinstance(result, rtype):
+            raise TypeError(f"Expected {rtype}, but got {type(result)}.")
+
+        if not result.dtype == bool:
+            raise ValueError(
+                f"Expected 'bool' dtype, but result has '{result.dtype}' dtype."
+            )
+        if len(result) != len(index):
+            raise ValueError(
+                f"Expected result of length {len(index)}, "
+                f"but is of length {len(result)}."
+            )
+        return result
+
+    # ############################################################
+    # Masking
+    # ############################################################
+
+    @property
+    def mask(self) -> pd.Series:
+        return pd.Series(self._data.mask, index=self.index, dtype=bool, copy=True)
+
+    def _update_mask(self):
+        mask = self._create_mask()
+        self._data._raw.soften_mask()
+        self._data._raw.mask = mask
+        self._data._raw.harden_mask()
+
+    def _create_mask(self) -> np.ndarray:
+        if self._masker is None:
+            return self._masker_default()
+
+        if self._masker_takes_raw:
+            flags = self.flags.current().to_numpy()
+            rtype = np.ndarray
+        else:
+            flags = self.flags.current()
+            rtype = pd.Series
+
+        func_name = self._masker.__name__
+        try:
+            result = self._run_and_check_masker(self._masker, flags, rtype, self.index)
+        except RuntimeError:
+            raise  # hide this location
+        except Exception as e:
+            raise ImplementationError(
+                f"The result of {func_name} is not as expected. "
+                f"Most probably due to an incorrect implementation."
+            ) from e  # "e was the direct cause for ImplementationError"
+
+        if not self._masker_takes_raw:
+            result = result.to_numpy()
+        return result
+
+    # ############################################################
     # Rendering
     # ############################################################
 
@@ -222,10 +277,7 @@ class BaseVariable:
         df = self.flags.raw.loc[:]
         df.insert(0, "|", ["|"] * len(df.index))
         df.insert(0, "flags", self.flags.current().array)
-        data = self._data._raw
-        if self.is_masked:
-            data = data.astype(str).filled("--")
-        df.insert(0, "data", data)
+        df.insert(0, "data", self.data)
         return df
 
     @final
@@ -265,7 +317,9 @@ if __name__ == "__main__":
     v = Variable([1, 2, 3, 999999.0], dtindex(4), pd.Series([N, N, 99, N]))
     v.flags.append([N, 55, 55, N])
     v.flags.append([N, 99, N, N])
-    v.mask = v.flagged(60)
-    v.mask_data(99)
-    v.masking_threshold
     print(v)
+    v.set_masker(lambda f: f > 55, raw=True, globally=True)
+    print(v)
+    v2 = Variable([1, 2])
+    print(v2.create_mask_raw)
+    print(v.create_mask_raw)

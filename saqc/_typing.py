@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, TypeVar, Callable, Union, TYPE_CHECKING, final
 
+import numpy as np
+
 try:
     from typing import Self
 except ImportError:
@@ -27,6 +29,8 @@ SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
 Numeric = Union[int, float]  # we do not accept complex yet
 Scalar = Union[Numeric, str, bool]
 MaskLike = Union[pd.Series | bool | list[bool]]
+# MaskerT = Union[Callable[[np.ndarray], np.ndarray] , Callable[[pd.Series], pd.Series]]
+MaskerT = Callable[[np.ndarray], np.ndarray]
 
 # VariableT is stricter and ensures that the same subclass of Variable always is
 # used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a

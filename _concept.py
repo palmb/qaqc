@@ -157,6 +157,32 @@ from pandas._typing import F
 # Variable.orig always show all data
 # Variable.data is masked by default according to user settable function
 
+# -----
+# Usage A (current)
+# -----
+# v.data    -> pd.Series    R   masked data
+# v.orig    -> pd.Series    R   original data
+# v.flags   -> FlagsFrame   R
+
+# -----
+# Usage B
+# -----
+# v.data    -> pd.Series    R    masked data
+# v.orig    -> pd.Series    R   original data
+# v.flags   -> pd.Series    R   current flags (aggregated frame)
+# v.raw     -> Accessor     R
+# v.raw.fframe  -> FlagsFrame
+# v.raw.data    -> FlagsFrame
+
+# -----
+# Usage C
+# -----
+# v.data    -> pd.Series        masked data
+# v.orig    -> pd.Series        original data
+# v.flags   -> pd.Series        current flags (aggregated frame)
+# v.fframe  -> pd.FlagsFrame    flags frame
+# v.fframe.current()    -> pd.Series      same as v.flags
+# v.fframe.df           -> pd.DataFrame   raw flags frame (f0, f1, f2, ...)
 class Frame(MutableMapping):
     def __init__(self, **kwargs):
         self._vars = {
