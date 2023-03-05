@@ -106,28 +106,19 @@ class BaseVariable:
         index: pd.Index | None = None,
         flags: FlagsFrame | pd.Series | None = None,
     ):
-        if isinstance(data, self.__class__):
+        if isinstance(data, type(self)):
             if flags is None:
-                flags = data._flags.current()
+                flags = data._flags
             index = data.index
             data = data._data._raw
 
-        try:
-            data = _Data(data, index)
-        except Exception as e:
-            raise type(e)("faulty data or index: " + str(e)) from None
+        data = _Data(data, index)
 
         # if no flags are given we create an empty FlagsFrame
         # otherwise we create a FlagsFrame with an initial column.
         # The resulting FlagsFrame will at most have the initial
         # column, even if a multidim object is passed.
-        if flags is None:
-            flags = data.index
-
-        try:
-            flags = FlagsFrame(flags)
-        except Exception as e:
-            raise type(e)("faulty flags: " + str(e)) from None
+        flags = FlagsFrame(index=data.index, initial=flags)
 
         self._data = data
         self._flags = flags
@@ -142,12 +133,10 @@ class BaseVariable:
 
     @property
     def data(self) -> pd.Series:
-        # write protected
         return self._data.series
 
     @property
     def flags(self) -> FlagsFrame:
-        # full access
         return self._flags
 
     @property

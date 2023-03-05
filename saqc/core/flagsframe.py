@@ -5,17 +5,17 @@ import pandas as pd
 import numpy as np
 from saqc.core.generic import compose
 from copy import deepcopy
-from saqc._typing import SupportsIndex
+from saqc._typing import SupportsIndex, final
 from saqc.constants import UNFLAGGED
 from typing import Any
+
 # from pandas.core.arraylike import OpsMixin
 
 
 class FlagsFrame:
-
-    __slots__ = ('_raw', "_meta")
+    __slots__ = ("_raw", "_meta")
     _raw: pd.DataFrame
-    _meta: list[dict[str, Any]]
+    _meta: pd.Series
 
     """
     Formerly known as History
@@ -31,8 +31,7 @@ class FlagsFrame:
                 index = initial.index
             else:
                 raise TypeError(
-                    "If no 'index' is given, 'initial' must "
-                    "have a pandas.Index."
+                    "If no 'index' is given, 'initial' must " "have a pandas.Index."
                 )
 
         # special case:  FlagsFrame(flags_frame)
@@ -51,10 +50,10 @@ class FlagsFrame:
             initial = initial.current()
 
         self._raw = pd.DataFrame(index=index, dtype=float)
-        self._meta = []
+        self._meta = pd.Series(dtype=object)
 
         if initial is not None:
-            self.append(initial, dict(source='init'))
+            self.append(initial, "init")
 
     @property
     def raw(self) -> pd.DataFrame:
@@ -73,19 +72,27 @@ class FlagsFrame:
         return self._raw.columns
 
     @property
-    def meta(self) -> list[dict[str, Any]]:
-        # we use a shallow copy, so user can modify the data
-        # within meta, but cannot remove from or append to meta
-        return list(self._meta)
+    def meta(self) -> pd.Series:
+        # we use a shallow copy, so the user might
+        # modify the data in each row, but deletions
+        # and appends won't reflect back on us.
+        return self._meta.copy(False)
 
     def _validate(self) -> None:
         assert len(self._raw.columns) == len(self.meta)
 
     def copy(self, deep=True) -> FlagsFrame:
-        cfunc = deepcopy if deep else list
         new = self.__class__(self.index)
         new._raw = self._raw.copy(deep)
-        new._meta = cfunc(self.meta)
+        if deep:
+            # meta is a pd.Series with object dtype,
+            # and we allow dicts to be stored there.
+            # This requires recursive copying, but
+            # pandas don't do that.
+            meta = deepcopy(self._meta)
+        else:
+            meta = self._meta.copy(False)
+        new._meta = meta
         return new
 
     def current(self) -> pd.Series:
@@ -109,11 +116,12 @@ class FlagsFrame:
         self.append(new, meta)
         return self
 
-    def append(self, value, meta: dict | None = None) -> FlagsFrame:
+    def append(self, value, meta: Any = None) -> FlagsFrame:
         value = pd.Series(value, dtype=float)
         assert len(value) == len(self.index)
-        self._raw[f"f{len(self)}"] = value.array
-        self._meta.append(meta or dict())
+        col = f"f{len(self)}"
+        self._raw[col] = value.array
+        self._meta[col] = meta
         return self
 
     def equals(self, other: FlagsFrame) -> bool:
@@ -141,19 +149,45 @@ class FlagsFrame:
     __lt__ = __bool_cmp__("__lt__")
     __le__ = __bool_cmp__("__le__")
 
-    def __repr__(self):
-        return repr(self._df_to_render()).replace("DataFrame", "FlagsFrame") + "\n"
+    # ############################################################
+    # Rendering
+    # ############################################################
 
     def _df_to_render(self) -> pd.DataFrame:
-        # newest first ?
-        # df = self._raw.loc[:, ::-1]
-        df = self._raw.loc[:]
+        df = self._raw[:].copy(deep=False)
         df.insert(0, "|", ["|"] * len(df.index))
         df.insert(0, "current", self.current().array)
         return df
 
+    def __str__(self):
+        return self.__repr__() + "\n"
+
+    @final
+    def __repr__(self) -> str:
+        cls_name = self.__class__.__name__
+        if self._raw.empty:
+            raw = self._raw
+        else:
+            raw = self._df_to_render()
+
+        string = repr(raw).replace("DataFrame", cls_name)
+
+        # show meta
+        # if self.meta.index.empty:
+        #     string += "\nMeta: []"
+        # else:
+        #     string += f"\nMeta:\n{self.meta}"
+        #
+        return string
+
+    @final
     def to_string(self, *args, **kwargs) -> str:
-        return self._df_to_render().to_string(*args, **kwargs)
+        cls_name = self.__class__.__name__
+        return (
+            self._df_to_render()
+            .to_string(*args, **kwargs)
+            .replace("DataFrame", cls_name)
+        )
 
 
 if __name__ == "__main__":
