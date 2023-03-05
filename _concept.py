@@ -65,7 +65,7 @@ from pandas._typing import F
 # data-corrections  function to alter data values or the shape of data
 # univariat         flagging or processing of a single Variable
 # multivariat       flagging or processing of a multiple Variables at once
-#
+
 # DETAILS
 # =======
 #
@@ -118,7 +118,8 @@ from pandas._typing import F
 # Other details
 # -------------
 # no need for `target` because of get/setitem
-#
+
+
 # Specifications
 # ==============
 #
@@ -149,6 +150,12 @@ from pandas._typing import F
 # Frame.fill_function(..., subset=None) -> new Frame
 # Frame.data_correction(..., subset=None) -> new Frame
 
+
+# -------
+# Masking
+# -------
+# Variable.orig always show all data
+# Variable.data is masked by default according to user settable function
 
 class Frame(MutableMapping):
     def __init__(self, **kwargs):

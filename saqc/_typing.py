@@ -24,7 +24,8 @@ VarOrQcT = TypeVar("VarOrQcT", "Variable", "SaQC")
 
 SupportsIndex = Union[pd.DataFrame, "Variable", "FlagsFrame"]
 SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
-Scalar = Union[int, float, str, complex]
+Numeric = Union[int, float]  # we do not accept complex yet
+Scalar = Union[Numeric, str, bool]
 MaskLike = Union[pd.Series | bool | list[bool]]
 
 # VariableT is stricter and ensures that the same subclass of Variable always is

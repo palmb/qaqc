@@ -6,8 +6,8 @@ import pandas as pd
 import numpy as np
 from numpy.ma import MaskedArray
 
-from saqc._typing import VariableT, final, MaskLike, T
-from typing import Any
+from saqc._typing import VariableT, final, MaskLike, Numeric
+from typing import Any, overload, Iterable, Collection
 from saqc.core.flagsframe import FlagsFrame
 from saqc.constants import UNFLAGGED
 
@@ -95,6 +95,7 @@ class _Data:
 class BaseVariable:
     _data: _Data
     _flags: FlagsFrame
+    _thresh: tuple[float, float]
 
     @property
     @abstractmethod
@@ -123,6 +124,15 @@ class BaseVariable:
 
         self._data = data
         self._flags = flags
+        self._thresh = (-np.inf, np.inf)
+
+    def copy(self: VariableT, deep: bool = True) -> VariableT:
+        cls = self.__class__
+        c = cls.__new__(cls)
+        c._data = self._data.copy(deep)
+        c._flags = self._flags.copy(deep)
+        c._thresh = self._thresh
+        return c
 
     @property
     def index(self) -> pd.Index:
@@ -154,9 +164,32 @@ class BaseVariable:
     def is_masked(self):
         return self._data.mask.any()
 
+    @property
+    def masking_threshold(self) -> tuple[float, float]:
+        return self._thresh
+
+    @masking_threshold.setter
+    def masking_threshold(self, value: Numeric | Collection[Numeric, Numeric]):
+        if isinstance(value, Numeric):
+            value = (value, np.inf)
+        if isinstance(value, Collection) and len(value) == 2:
+            self._thresh = tuple(map(float, value))  # noqa
+        else:
+            raise TypeError("Expect one or two values of type int or float")
+
+    @overload
+    def mask_data(self, mask: MaskLike | None = None, **kwargs) -> BaseVariable:
+        ...
+
+    @overload
     def mask_data(
         self, lower: float = UNFLAGGED, upper: float = np.inf
     ) -> BaseVariable:
+        ...
+
+    def mask_data(self, *args, **kwargs) -> BaseVariable:
+        lower = -np.inf
+        upper = np.inf
         self.mask = self.flagged(lower, upper)
         return self
 
@@ -167,13 +200,6 @@ class BaseVariable:
     def flagged(self, lower: float = UNFLAGGED, upper: float = np.inf) -> pd.Series:
         """return a boolean series that indicates flagged values"""
         return self.flags.flagged(lower, upper)
-
-    def copy(self: VariableT, deep: bool = True) -> VariableT:
-        cls = self.__class__
-        c = cls.__new__(cls)
-        c._data = self._data.copy(deep)
-        c._flags = self._flags.copy(deep)
-        return c
 
     def equals(self, other: Any) -> bool:
         return (
@@ -240,4 +266,6 @@ if __name__ == "__main__":
     v.flags.append([N, 55, 55, N])
     v.flags.append([N, 99, N, N])
     v.mask = v.flagged(60)
+    v.mask_data(99)
+    v.masking_threshold
     print(v)
