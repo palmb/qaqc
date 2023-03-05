@@ -102,15 +102,20 @@ class FlagsFrame:
             result = self.raw.ffill(axis=1).iloc[:, -1]
         return result.fillna(UNFLAGGED)
 
-    def flagged(self) -> pd.Series:
-        return self.current() > UNFLAGGED
+    def flagged(self, lower: float = -np.inf, upper: float = np.inf) -> pd.Series:
+        data = self.current()
+        if lower == -np.inf:
+            result = data > lower
+        else:
+            result = data >= lower
+        if upper < np.inf:
+            result &= data < upper
+        return result
 
     def template(self, fill_value=np.nan) -> pd.Series:
         return pd.Series(fill_value, index=self.index, dtype=float)
 
-    def append_with_mask(
-        self, mask, flag: float | int, meta: dict | None = None
-    ) -> FlagsFrame:
+    def append_with_mask(self, mask, flag: float | int, meta: Any = None) -> FlagsFrame:
         new = self.template()
         new[mask] = float(flag)
         self.append(new, meta)

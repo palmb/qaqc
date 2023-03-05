@@ -1,4 +1,5 @@
 #!/usr/bin/env python
 import numpy as np
+from typing import Final
 
-UNFLAGGED = -np.inf
+UNFLAGGED: Final[float] = -np.inf

@@ -9,6 +9,7 @@ from numpy.ma import MaskedArray
 from saqc._typing import VariableT, final, MaskLike, T
 from typing import Any
 from saqc.core.flagsframe import FlagsFrame
+from saqc.constants import UNFLAGGED
 
 
 class _Data:
@@ -99,7 +100,7 @@ class BaseVariable:
     @abstractmethod
     def _constructor(self: VariableT) -> type[VariableT]:
         ...
-    
+
     def __init__(
         self,
         data,
@@ -145,11 +146,27 @@ class BaseVariable:
 
     @mask.setter
     def mask(self, value):
+        self._data._raw.soften_mask()
         self._data.mask = value
+        self._data._raw.harden_mask()
 
-    def flagged(self) -> pd.Series:
+    @property
+    def is_masked(self):
+        return self._data.mask.any()
+
+    def mask_data(
+        self, lower: float = UNFLAGGED, upper: float = np.inf
+    ) -> BaseVariable:
+        self.mask = self.flagged(lower, upper)
+        return self
+
+    def unmask_data(self) -> BaseVariable:
+        self.mask = False
+        return self
+
+    def flagged(self, lower: float = UNFLAGGED, upper: float = np.inf) -> pd.Series:
         """return a boolean series that indicates flagged values"""
-        return self.flags.flagged()
+        return self.flags.flagged(lower, upper)
 
     def copy(self: VariableT, deep: bool = True) -> VariableT:
         cls = self.__class__
@@ -179,7 +196,10 @@ class BaseVariable:
         df = self.flags.raw.loc[:]
         df.insert(0, "|", ["|"] * len(df.index))
         df.insert(0, "flags", self.flags.current().array)
-        df.insert(0, "data", self.data.array)
+        data = self._data._raw
+        if self.is_masked:
+            data = data.astype(str).filled("--")
+        df.insert(0, "data", data)
         return df
 
     @final
@@ -202,7 +222,8 @@ class BaseVariable:
         return s
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+
     class Variable(BaseVariable):
         def __init__(self, data, index=None, flags=None):
             super().__init__(data=data, index=index, flags=flags)
@@ -212,7 +233,11 @@ if __name__ == '__main__':
             return type(self)
 
     from saqc._testing import dtindex, N
-    v = Variable([1,2,3,4], dtindex(4))
+
+    v = Variable([1, 2, 3, 4], dtindex(4))
     print(v)
-    v = Variable([1,2,3,4], dtindex(4), pd.Series([N, N, 99, N]))
+    v = Variable([1, 2, 3, 999999.0], dtindex(4), pd.Series([N, N, 99, N]))
+    v.flags.append([N, 55, 55, N])
+    v.flags.append([N, 99, N, N])
+    v.mask = v.flagged(60)
     print(v)
