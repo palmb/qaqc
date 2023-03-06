@@ -7,6 +7,7 @@ from saqc.core.generic import compose
 from copy import deepcopy
 from saqc._typing import SupportsIndex, final
 from saqc.constants import UNFLAGGED
+import saqc.core.utils as utils
 from typing import Any
 
 # from pandas.core.arraylike import OpsMixin
@@ -115,12 +116,12 @@ class FlagsFrame:
         new[mask] = float(flag)
         return self.append(new, meta)
 
-    def append(self, value, meta: Any = None) -> FlagsFrame:
+    def append(self, value, **meta) -> FlagsFrame:
         value = pd.Series(value, dtype=float)
         assert len(value) == len(self.index)
         col = f"f{len(self)}"
         self._raw[col] = value.array
-        self._meta[col] = meta
+        self._meta[col] = meta or None
         return self
 
     def equals(self, other: FlagsFrame) -> bool:
@@ -164,12 +165,12 @@ class FlagsFrame:
     @final
     def __repr__(self) -> str:
         string = repr(self.to_pandas()).replace("DataFrame", self.__class__.__name__)
-        if not self.columns.empty:
-            string += f"\nMeta: {dict(self.meta)}"
+        meta = dict(self.meta)
+        string += f"\nMeta: {utils.repr_extended(meta, kwdicts=True)}"
         return string
 
     @final
-    def to_string(self, *args, **kwargs) -> str:
+    def to_string(self, *args, show_meta=True, **kwargs) -> str:
         return (
             self.to_pandas()
             .to_string(*args, **kwargs)
@@ -181,8 +182,10 @@ if __name__ == "__main__":
     from saqc._testing import dtindex, N
 
     s = pd.Series([1, 2, 3], index=dtindex(3))
+    ff = FlagsFrame(pd.Index([]))
+    print(ff)
     ff = FlagsFrame(s.index)
-    ff.append([N, N, N])
+    ff.append([N, N, N], someSerArg=s, someOther=None)
     print(ff)
     ff.append(s)
     ff.append(s.values)
@@ -190,7 +193,7 @@ if __name__ == "__main__":
     ff2.append([N, N, N])
     print(ff)
     print(ff2)
-    # print(ff == ff2)
+    print(ff == ff2)
     ff2.append([N, 99, N])
     print(ff2)
     print(ff == ff2)

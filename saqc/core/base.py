@@ -250,6 +250,13 @@ class BaseVariable:
         self._history.append(value, meta)
         return self
 
+    def mask(self):
+        pass
+
+    def set_flags(self, value: pd.Series, **meta):
+        self._history.append(value, **meta)
+        pass
+
     # ############################################################
     # Masker and Masking
     # ############################################################

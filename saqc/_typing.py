@@ -31,6 +31,8 @@ Scalar = Union[Numeric, str, bool]
 MaskLike = Union[pd.Series | bool | list[bool]]
 # MaskerT = Union[Callable[[np.ndarray], np.ndarray] , Callable[[pd.Series], pd.Series]]
 MaskerT = Callable[[np.ndarray], np.ndarray]
+MetaT = dict[str, Any]
+PandasT = Union[pd.Series, pd.DataFrame]
 
 # VariableT is stricter and ensures that the same subclass of Variable always is
 # used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a
