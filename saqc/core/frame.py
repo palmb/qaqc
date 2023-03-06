@@ -12,11 +12,11 @@ T = TypeVar("T")
 
 # Wording
 # data : a single Series holding the actual data
-# fframe : an instance of FlagsFrame holding all flagging information
-# final-fframe (fflags): a single Series representing the resulting fframe for data
+# history : an instance of FlagsFrame holding all flagging information
+# final-history (fflags): a single Series representing the resulting history for data
 # raw (as attribute in internal classes) : holds the actual data and named
-#       `raw` to avoid confusion, especially `fframe.raw` is less confusing
-#       than `fframe.data` .
+#       `raw` to avoid confusion, especially `history.raw` is less confusing
+#       than `history.data` .
 
 
 def _for_each(obj, func, *args, **kwargs):
@@ -76,7 +76,7 @@ class SaQC(FuncMixin):
         for k, var in self._vars.items():
             var: Variable
             df[f"{k}-data"] = var.data
-            df[f"{k}-fflags"] = var.fframe.current()
+            df[f"{k}-fflags"] = var.flags
         print(df)
 
     def copy(self):

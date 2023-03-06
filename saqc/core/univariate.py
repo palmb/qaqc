@@ -15,35 +15,35 @@ class UnivariateMixin(BaseVariable, ABC):
     def flag_limits(self, lower=-np.inf, upper=np.inf, flag=9) -> BaseVariable:
         result = self.copy().mask_data()
         mask = (result.data < lower) | (result.data > upper)
-        result.fframe.append_with_mask(mask, flag, meta="flag_limits")
+        result.history.append_with_mask(mask, flag, meta="flag_limits")
         return result.unmask_data()
 
     def flag_something(self, flag=99) -> UnivariateMixin:
         result = self.copy().mask_data()
         sample = result.data.dropna().sample(frac=0.3)
-        new = result.fframe.template()
+        new = result.history.template()
         new[sample.index] = flag
-        result.fframe.append(new, "flag_something")
+        result.history.append(new, "flag_something")
         return result.unmask_data()
 
     def flagna(self, flag=999) -> UnivariateMixin:
         # no masking desired !
         result = self.copy()
-        result.fframe.append_with_mask(result.data.isna(), flag, "flagna")
+        result.history.append_with_mask(result.data.isna(), flag, "flagna")
         return result
 
     def replace_flag(self, old, new) -> UnivariateMixin:
         # no masking needed
         result = self.copy()
-        mask = self.fframe.current() == old
-        result.fframe.append_with_mask(mask, new, "replace_flag")
+        mask = self.flags == old
+        result.history.append_with_mask(mask, new, "replace_flag")
         return result
 
     def flag_generic(self, func, flag=99) -> UnivariateMixin:
         # func ==> ``lambda v: v.data != 3``
         new = self.copy()
         mask = func(self.data)
-        new.fframe.append_with_mask(mask, flag, "flag_generic")
+        new.history.append_with_mask(mask, flag, "flag_generic")
         return new
 
     # ############################################################
@@ -53,7 +53,7 @@ class UnivariateMixin(BaseVariable, ABC):
     # - must return a new Variable
     # - may set new fframe on the new Variable
     # - may use the existing old Flags squeezed to a pd.Series
-    #  (see `FlagsFrame.current`) as the initial fframe for the
+    #  (see `FlagsFrame._current`) as the initial fframe for the
     #  new Variable
     # ############################################################
 
@@ -70,9 +70,9 @@ class UnivariateMixin(BaseVariable, ABC):
         # alter data
         # initial fframe: squeezed old
         if flag is not None:
-            flags = self.flagna(flag).fframe
+            flags = self.flagna(flag).history
         else:
-            flags = self.fframe
+            flags = self.history
         data = self.data.interpolate()
         return self._constructor(data, flags)
 

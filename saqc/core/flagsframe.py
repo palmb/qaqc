@@ -36,7 +36,7 @@ class FlagsFrame:
 
         # special case:  FlagsFrame(flags_frame)
         elif isinstance(index, type(self)):
-            initial = index.current()
+            initial = index._current()
             index = index.index
         else:
             try:
@@ -47,7 +47,7 @@ class FlagsFrame:
         index.name = None
 
         if isinstance(initial, type(self)):
-            initial = initial.current()
+            initial = initial._current()
 
         self._raw = pd.DataFrame(index=index, dtype=float)
         self._meta = pd.Series(dtype=object)
@@ -69,8 +69,7 @@ class FlagsFrame:
         new._meta = meta
         return new
 
-    @property
-    def raw(self) -> pd.DataFrame:
+    def to_pandas(self) -> pd.DataFrame:
         return self._raw.copy()
 
     @property
@@ -90,7 +89,7 @@ class FlagsFrame:
         # we use a shallow copy, so the user might
         # modify the data in each row, but deletions
         # and appends won't reflect back on us.
-        return self._meta.copy(False)
+        return self._meta.copy(deep=False)
 
     def __getitem__(self, key):
         return self._raw.__getitem__(key).copy()
@@ -98,28 +97,23 @@ class FlagsFrame:
     def __setitem__(self, key, value):
         raise NotImplementedError("use 'append' instead")
 
-    def current(self) -> pd.Series:
+    def _current(self) -> pd.Series:
         if self._raw.empty:
             result = pd.Series(data=np.nan, index=self.index, dtype=float)
         else:
-            result = self.raw.ffill(axis=1).iloc[:, -1]
+            result = self._raw.ffill(axis=1).iloc[:, -1]
         return result.fillna(UNFLAGGED)
 
-    def is_flagged(self, current: bool = True) -> pd.Series | pd.DataFrame:
-        flags = self.current() if current else self.raw
-        return flags > UNFLAGGED
+    def is_flagged(self) -> pd.DataFrame:
+        return self._raw > UNFLAGGED
 
-    def is_unflagged(self, current: bool = True) -> pd.Series | pd.DataFrame:
-        return ~self.is_flagged(current=current)
-
-    def template(self, fill_value=np.nan) -> pd.Series:
-        return pd.Series(fill_value, index=self.index, dtype=float)
+    def is_unflagged(self) -> pd.DataFrame:
+        return self._raw == UNFLAGGED
 
     def append_with_mask(self, mask, flag: float | int, meta: Any = None) -> FlagsFrame:
-        new = self.template()
+        new = pd.Series(np.nan, index=self.index, dtype=float)
         new[mask] = float(flag)
-        self.append(new, meta)
-        return self
+        return self.append(new, meta)
 
     def append(self, value, meta: Any = None) -> FlagsFrame:
         value = pd.Series(value, dtype=float)
@@ -129,11 +123,7 @@ class FlagsFrame:
         self._meta[col] = meta
         return self
 
-    def equals(self, other: FlagsFrame | pd.Series, current=True) -> bool:
-        if current:
-            if isinstance(other, type(self)):
-                other = other.current()
-            return isinstance(other, pd.Series) and self.current().equals(other)
+    def equals(self, other: FlagsFrame) -> bool:
         return isinstance(other, type(self)) and self._raw.equals(other._raw)
 
     def __len__(self):
@@ -143,9 +133,14 @@ class FlagsFrame:
     def __bool_cmp__(funcname):
         def cmp(self, other: FlagsFrame) -> pd.Series:
             if isinstance(other, self.__class__):
-                other = other.current()
-            current = self.current()
-            return getattr(current, funcname)(other)
+                other = other._raw
+            df: pd.DataFrame = self._raw
+            if isinstance(other, pd.DataFrame):
+                if not df.columns.equals(other.columns):
+                    raise ValueError("Columns does not match")
+                if not df.index.equals(other.index):
+                    raise ValueError("Index does not match")
+            return getattr(df, funcname)(other)
 
         return cmp
 
@@ -162,40 +157,23 @@ class FlagsFrame:
     # Rendering
     # ############################################################
 
-    def _df_to_render(self) -> pd.DataFrame:
-        df = self._raw[:].copy(deep=False)
-        df.insert(0, "|", ["|"] * len(df.index))
-        df.insert(0, "current", self.current().array)
-        return df
-
+    @final
     def __str__(self):
         return self.__repr__() + "\n"
 
     @final
     def __repr__(self) -> str:
-        cls_name = self.__class__.__name__
-        if self._raw.empty:
-            raw = self._raw
-        else:
-            raw = self._df_to_render()
-
-        string = repr(raw).replace("DataFrame", cls_name)
-
-        # show meta
-        # if self.meta.index.empty:
-        #     string += "\nMeta: []"
-        # else:
-        #     string += f"\nMeta:\n{self.meta}"
-        #
+        string = repr(self.to_pandas()).replace("DataFrame", self.__class__.__name__)
+        if not self.columns.empty:
+            string += f"\nMeta: {dict(self.meta)}"
         return string
 
     @final
     def to_string(self, *args, **kwargs) -> str:
-        cls_name = self.__class__.__name__
         return (
-            self._df_to_render()
+            self.to_pandas()
             .to_string(*args, **kwargs)
-            .replace("DataFrame", cls_name)
+            .replace("DataFrame", self.__class__.__name__)
         )
 
 
@@ -212,7 +190,7 @@ if __name__ == "__main__":
     ff2.append([N, N, N])
     print(ff)
     print(ff2)
-    print(ff == ff2)
+    # print(ff == ff2)
     ff2.append([N, 99, N])
     print(ff2)
     print(ff == ff2)

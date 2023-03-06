@@ -97,7 +97,7 @@ from pandas._typing import F
 #   - might fill nans
 #   - might set flags
 #   - flag history is not preserved
-#   - initial flags of new Variable can be the current flags (squeezed History)
+#   - initial flags of new Variable can be the _current flags (squeezed History)
 #     of the derived variable, but the flags history is NOT preserved
 #
 # univariate vs. multivariate details
@@ -169,20 +169,30 @@ from pandas._typing import F
 # -----
 # v.data    -> pd.Series    R    masked data
 # v.orig    -> pd.Series    R   original data
-# v.flags   -> pd.Series    R   current flags (aggregated frame)
+# v.flags   -> pd.Series    R   _current flags (aggregated frame)
 # v.raw     -> Accessor     R
 # v.raw.flags  -> FlagsFrame
 # v.raw.data    -> FlagsFrame
 
 # -----
-# Usage C  (current)
+# Usage C  (_current)
 # -----
 # v.data    -> pd.Series        masked data
 # v.orig    -> pd.Series        original data
-# v.flags   -> pd.Series        current flags (aggregated frame)
+# v.flags   -> pd.Series        _current flags (aggregated frame)
 # v.fframe  -> pd.FlagsFrame    flags frame
-# v.fframe.current()    -> pd.Series      same as v.flags
+# v.fframe._current()    -> pd.Series      same as v.flags
 # v.fframe.df           -> pd.DataFrame   raw flags frame (f0, f1, f2, ...)
+
+# -----
+# Usage D
+# -----
+# v.data    -> pd.Series        masked data
+# v.orig    -> pd.Series        original data
+# v.flags   -> pd.Series        _current flags (aggregated frame)
+# v.history -> pd.FlagsFrame    flags frame
+# v.history.agg()    -> pd.Series      same as v.flags
+# v.history.df       -> pd.DataFrame   raw flags frame (f0, f1, f2, ...)
 class Frame(MutableMapping):
     def __init__(self, **kwargs):
         self._vars = {
