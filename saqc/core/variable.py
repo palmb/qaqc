@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     v = Variable([1, 2, 3, 4], index=dtindex(4))
     v = v.flag_limits(2)
-    v.flags.append(pd.Series([N, 5, 5, N]))
+    v.fframe.append(pd.Series([N, 5, 5, N]))
     v.mask_data()
     print(v)
     new = Variable(v)
@@ -41,12 +41,12 @@ if __name__ == "__main__":
     v._data.mask
     v.data: pd.Series
     v.flags: FlagsFrame
-    v.flags.raw: pd.DataFrame
+    v.fframe.raw: pd.DataFrame
 
     v.data: "DataSeries"
     v.flags: FlagsFrame
     v.data.series: pd.Series
-    v.flags.frame: pd.DataFrame
+    v.fframe.frame: pd.DataFrame
     print(v)
     v.unmask_data()
     v.mask[1] = True

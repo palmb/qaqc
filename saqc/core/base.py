@@ -4,13 +4,16 @@ from __future__ import annotations
 from abc import abstractmethod
 import pandas as pd
 import numpy as np
-from numpy.ma import MaskedArray
 
 from saqc._typing import VariableT, final, MaskLike, MaskerT
 from typing import Any, overload, Iterable, Collection, Callable, Union
 from saqc.core.flagsframe import FlagsFrame
 from saqc.constants import UNFLAGGED
-from saqc.errors import ImplementationError
+from saqc.errors import (
+    MaskerError,
+    MaskerResultError,
+    MaskerExecutionError,
+)
 
 
 class _Data:
@@ -103,9 +106,28 @@ class _Data:
 class BaseVariable:
     _data: _Data
     _flags: FlagsFrame
-    _thresh: tuple[float, float]
-    _masker: MaskerT | None
-    _masker_takes_raw: bool
+    masker: MaskerT | None
+
+    # size of Variable
+    # --------------------------
+    # _flags._raw   (pd.Dataframe)
+    #   .index      pd.Index = datetime64(8) * length
+    #   -> col      float(8) * length * #columns
+    # _data._raw    (MaskedArray)
+    #   .data       float(8) * length
+    #   .mask       bool(1) * length
+    # _data._index  is a reference to _flag._raw.index
+    # --------------------------
+    # (8 + 1 + 8 + 8) * length + (8 * length * columns)
+    # 25B * length + 8B * length * columns
+    # size(column) == size(data) == size(index)
+    # Columns + Data + 2x Index = Columns+3
+    # ==> 8B * length * (columns+3) + 1length [from the mask]
+
+    # vs size of data-series + fframe-df
+    # Columns + Data + 2x Index = Columns+3
+    # ==> 8B * length * (columns+3)
+
     global_masker: MaskerT | None = None
 
     @property
@@ -127,7 +149,7 @@ class BaseVariable:
 
         data = _Data(data, index)
 
-        # if no flags are given we create an empty FlagsFrame
+        # if no fframe are given we create an empty FlagsFrame
         # otherwise we create a FlagsFrame with an initial column.
         # The resulting FlagsFrame will at most have the initial
         # column, even if a multidim object is passed.
@@ -135,19 +157,21 @@ class BaseVariable:
 
         self._data = data
         self._flags = flags
-        self._thresh = (-np.inf, np.inf)
-        self._masker = None
-        self._masker_takes_raw = False
+        self.masker = None
+        self._optimize()
 
     def copy(self: VariableT, deep: bool = True) -> VariableT:
+        self._update_mask()
         cls = self.__class__
         c = cls.__new__(cls)
         c._data = self._data.copy(deep)
         c._flags = self._flags.copy(deep)
-        c._thresh = self._thresh
-        c._masker = self._masker
-        c._masker_takes_raw = self._masker_takes_raw
-        return c
+        c.masker = self.masker
+        return c._optimize()
+
+    def _optimize(self):
+        # use a single index
+        self._data._index = self._flags._raw.index
 
     @property
     def index(self) -> pd.Index:
@@ -155,85 +179,64 @@ class BaseVariable:
 
     @index.setter
     def index(self, value) -> None:
-        self._data.index = value
+        try:
+            self._data.index = value
+            self._flags.index = value
+        finally:
+            # on error this also resets the index
+            # of data with old flags.index
+            self._optimize()
 
     @property
     def orig(self) -> pd.Series:
         return self._data.orig_series
 
-
     @property
     def data(self) -> pd.Series:
+        self._update_mask()
         return self._data.masked_series
 
     @property
-    def flags(self) -> FlagsFrame:
+    def flags(self) -> pd.Series:
+        return self._flags.current()
+
+    @property
+    def fframe(self) -> FlagsFrame:
         return self._flags
 
-    def flagged(self, lower: float = UNFLAGGED, upper: float = np.inf) -> pd.Series:
+    def is_flagged(self, lower: float = UNFLAGGED, upper: float = np.inf) -> pd.Series:
         """return a boolean series that indicates flagged values"""
-        return self.flags.is_flagged()
+        return self.fframe.is_flagged()
 
     def equals(self, other: Any) -> bool:
         return (
             isinstance(other, type(self))
             and self.data.equals(other.data)
-            and self.flags.equals(other.flags)
+            and self.fframe.equals(other.fframe)
         )
 
     def __eq__(self, other) -> bool:
         # todo ??
         return self.equals(other)
 
-    # ############################################################
-    # Masker
-    # ############################################################
-
-    def _masker_default(self) -> np.ndarray:
-        return self.flags.current().to_numpy() > UNFLAGGED
-
-    @classmethod
-    def set_masker_global(cls, func: MaskerT, raw=False):
-        assert callable(func)
-        name = "create_mask_raw" if raw else "create_mask"
-        setattr(cls, name, staticmethod(func))
-
-    def set_masker(self, func: MaskerT, raw=False):
-        assert callable(func)
-        name = "create_mask_raw" if raw else "create_mask"
-        setattr(self, name, func)
-
-    @staticmethod
-    def _run_and_check_masker(
-            masker: MaskerT, flags: pd.Series | np.ndarray, rtype, index
-    ):
-        func_name = masker.__name__
-        try:
-            result = masker(flags)
-        except Exception as e:
-            raise RuntimeError(f"Execution of {func_name} failed.") from e
-
-        if not isinstance(result, rtype):
-            raise TypeError(f"Expected {rtype}, but got {type(result)}.")
-
-        if not result.dtype == bool:
-            raise ValueError(
-                f"Expected 'bool' dtype, but result has '{result.dtype}' dtype."
-            )
-        if len(result) != len(index):
-            raise ValueError(
-                f"Expected result of length {len(index)}, "
-                f"but is of length {len(result)}."
-            )
-        return result
+    def __getitem__(self, key):
+        if key in ["data", "mask", "flags"]:
+            return getattr(self, key)
+        return self._flags.__getitem__(key)
 
     # ############################################################
-    # Masking
+    # Masker and Masking
     # ############################################################
-
     @property
     def mask(self) -> pd.Series:
-        return pd.Series(self._data.mask, index=self.index, dtype=bool, copy=True)
+        mask = self._get_mask()
+        return pd.Series(mask, index=self.index, dtype=bool, copy=True)
+
+    def _get_mask(self):
+        # maybe cache, hash and cash $$$
+        # with pd.util.hash_pandas_object() ??
+        self._update_mask()
+        return self._data.mask
 
     def _update_mask(self):
         mask = self._create_mask()
@@ -242,62 +245,125 @@ class BaseVariable:
         self._data._raw.harden_mask()
 
     def _create_mask(self) -> np.ndarray:
-        if self._masker is None:
-            return self._masker_default()
+        masker = self.masker or self.global_masker
+        if masker is None:
+            return self.__default_masker()
 
-        if self._masker_takes_raw:
-            flags = self.flags.current().to_numpy()
-            rtype = np.ndarray
-        else:
-            flags = self.flags.current()
-            rtype = pd.Series
-
-        func_name = self._masker.__name__
+        flags = self.fframe.current().to_numpy()
+        length = len(flags)
         try:
-            result = self._run_and_check_masker(self._masker, flags, rtype, self.index)
-        except RuntimeError:
-            raise  # hide this location
+            result = masker(flags)
         except Exception as e:
-            raise ImplementationError(
-                f"The result of {func_name} is not as expected. "
-                f"Most probably due to an incorrect implementation."
-            ) from e  # "e was the direct cause for ImplementationError"
+            raise MaskerExecutionError(
+                masker, f"Execution of user-set masker {masker} failed"
+            ) from e
 
-        if not self._masker_takes_raw:
-            result = result.to_numpy()
+        try:
+            self._check_masker_result(result, length)
+        except Exception as e:
+            raise MaskerResultError(
+                masker,
+                f"Unexpected result of the masker-function {masker.__name__}\n"
+                f"\tMost probably due to an incorrect implementation:\n"
+                f"\t" + str(e),
+            ) from None
+
         return result
+
+    @staticmethod
+    def _check_masker_result(result: np.ndarray, length: int) -> None:
+        if not isinstance(result, np.ndarray):
+            raise TypeError(
+                f"Result has wrong type. Expected {np.ndarray}, but got {type(result)}"
+            )
+        if not result.dtype == bool:
+            raise ValueError(
+                f"Result has wrong dtype. Expected {np.dtype(bool)!r}, "
+                f"but result has {result.dtype!r} dtype"
+            )
+        if len(result) != length:
+            raise ValueError(
+                f"Result has wrong length.  Expected {length}, "
+                f"but got {len(result)} values"
+            )
+
+    @final
+    def __default_masker(self) -> np.ndarray:
+        return self.fframe.current().to_numpy() > UNFLAGGED
 
     # ############################################################
     # Rendering
     # ############################################################
 
-    def _df_to_render(self) -> pd.DataFrame:
-        # newest first ?
-        # df = self.flags.raw.loc[:, ::-1]
-        df = self.flags.raw.loc[:]
+    def _mk_repr_frame(self) -> pd.DataFrame:
+        df = self.fframe.raw.loc[:]
         df.insert(0, "|", ["|"] * len(df.index))
-        df.insert(0, "flags", self.flags.current().array)
-        df.insert(0, "data", self.data)
+        df.insert(0, "flags", self.fframe.current().array)
+        # to prevent calling masker multiple times
+        # we use private methods.
+        df.insert(0, "mask", self._get_mask())
+        df.insert(0, "data", self._data._raw.filled())
         return df
 
     @final
-    def __repr__(self) -> str:
-        cls_name = self.__class__.__name__
-        if self.index.empty:
-            return repr(self.data).replace("Series", cls_name)
-        return repr(self._df_to_render()).replace("DataFrame", cls_name)
-
     def __str__(self):
         return self.__repr__() + "\n"
 
     @final
-    def to_string(self, *args, **kwargs) -> str:
+    def __render_frame(self, df: pd.DataFrame) -> str:
         if self.index.empty:
-            df = self.data.to_frame("data")
-        else:
-            df = self._df_to_render()
+            df.drop("|", axis=1, inplace=True)
+        return repr(df).replace("DataFrame", self.__class__.__name__)
+
+    @final
+    def __repr__(self) -> str:
+        try:
+            df = self._mk_repr_frame()
+        except MaskerError as e:
+            # now we create a frame without calling masker
+            df = self.fframe.raw.loc[:]
+            df.insert(0, "|", ["|"] * len(df.index))
+            df.insert(0, "flags", self.fframe.current().array)
+            df.insert(0, "**ORIG**", self._data._raw.data)
+            string = self.__render_frame(df)
+            raise RuntimeError(
+                f"\n{string}\nUser-set masker failed for repr(), "
+                f"see the prior exception above"
+            ) from e
+        return self.__render_frame(df)
+
+    @final
+    def to_string(self, *args, **kwargs) -> str:
+        df = self._mk_repr_frame()
+        if self.index.empty:
+            df.drop("|", axis=1, inplace=True)
         s = df.to_string(*args, **kwargs).replace("DataFrame", self.__class__.__name__)
         return s
+
+    def memory_usage(self, index: bool = True, deep: bool = False) -> pd.Series:
+        flags_df = self._flags._raw
+        data = self._data._raw.data
+        mask = self._data._raw.mask
+        flags_index = flags_df.index
+        data_index = self._data._index
+        result = pd.Series(dtype=int)
+        if index:
+            n = flags_index.memory_usage(deep=deep)
+            if data_index is not flags_index:
+                n += data_index.memory_usage(deep=deep)
+        result["index"] = n
+        result["fframe"] = flags_df.memory_usage(index=False, deep=deep).sum()
+        result["data"] = data.itemsize * data.size
+        result["mask"] = mask.itemsize * mask.size
+        result["mask"] = mask.itemsize * mask.size
+        return result
+
+    def to_pandas(self) -> pd.DataFrame:
+        df = self.fframe.raw
+        df.insert(0, "flags", self.fframe.current().array)
+        df.insert(0, "mask", self.mask.array)
+        df.insert(0, "data", self.data.array)
+        return df
 
 
 if __name__ == "__main__":
@@ -315,11 +381,23 @@ if __name__ == "__main__":
     v = Variable([1, 2, 3, 4], dtindex(4))
     print(v)
     v = Variable([1, 2, 3, 999999.0], dtindex(4), pd.Series([N, N, 99, N]))
-    v.flags.append([N, 55, 55, N])
-    v.flags.append([N, 99, N, N])
+    v.fframe.append([N, 55, 55, N])
+    v.fframe.append([N, 99, N, N])
     print(v)
-    v.set_masker(lambda f: f > 55, raw=True, globally=True)
+    # runtime_fail = lambda x: 1 / 0
+    # result_fail = lambda x: x.astype(str)
+    # v.masker = result_fail
     print(v)
-    v2 = Variable([1, 2])
-    print(v2.create_mask_raw)
-    print(v.create_mask_raw)
+    v2 = Variable([])
+    v2.fframe.append([], meta="la")
+
+    print(v.memory_usage(deep=True))
+    v._optimize()
+    print("totoal:", v.memory_usage(deep=True).sum())
+    print("pandas:")
+    df = v.to_pandas().astype(float)
+    df["mask"] = df["mask"].astype(bool)
+    df.drop("flags", axis=1, inplace=True)
+    print(df)
+    print(df.memory_usage(deep=True))
+    print(df.memory_usage(deep=True).sum())

@@ -55,6 +55,20 @@ class FlagsFrame:
         if initial is not None:
             self.append(initial, "init")
 
+    def copy(self, deep=True) -> FlagsFrame:
+        new = self.__class__(self.index)
+        new._raw = self._raw.copy(deep)
+        if deep:
+            # meta is a pd.Series with object dtype,
+            # and we allow dicts to be stored there.
+            # This requires recursive copying, but
+            # pandas don't do that.
+            meta = deepcopy(self._meta)
+        else:
+            meta = self._meta.copy(False)
+        new._meta = meta
+        return new
+
     @property
     def raw(self) -> pd.DataFrame:
         return self._raw.copy()
@@ -78,22 +92,11 @@ class FlagsFrame:
         # and appends won't reflect back on us.
         return self._meta.copy(False)
 
-    def _validate(self) -> None:
-        assert len(self._raw.columns) == len(self.meta)
+    def __getitem__(self, key):
+        return self._raw.__getitem__(key).copy()
 
-    def copy(self, deep=True) -> FlagsFrame:
-        new = self.__class__(self.index)
-        new._raw = self._raw.copy(deep)
-        if deep:
-            # meta is a pd.Series with object dtype,
-            # and we allow dicts to be stored there.
-            # This requires recursive copying, but
-            # pandas don't do that.
-            meta = deepcopy(self._meta)
-        else:
-            meta = self._meta.copy(False)
-        new._meta = meta
-        return new
+    def __setitem__(self, key, value):
+        raise NotImplementedError("use 'append' instead")
 
     def current(self) -> pd.Series:
         if self._raw.empty:

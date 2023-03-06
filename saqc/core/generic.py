@@ -108,7 +108,7 @@ class FuncMixin:
         mask = self.data >= thresh
         s = pd.Series(np.nan, index=self.index, dtype=float)
         s[mask] = flag
-        self.flags.append(s)
+        self.fframe.append(s)
         return self
 
     def __dispatch__(self, func: F) -> F:

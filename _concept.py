@@ -158,11 +158,11 @@ from pandas._typing import F
 # Variable.data is masked by default according to user settable function
 
 # -----
-# Usage A (current)
+# Usage A
 # -----
 # v.data    -> pd.Series    R   masked data
 # v.orig    -> pd.Series    R   original data
-# v.flags   -> FlagsFrame   R
+# v.flags  -> FlagsFrame   R
 
 # -----
 # Usage B
@@ -171,11 +171,11 @@ from pandas._typing import F
 # v.orig    -> pd.Series    R   original data
 # v.flags   -> pd.Series    R   current flags (aggregated frame)
 # v.raw     -> Accessor     R
-# v.raw.fframe  -> FlagsFrame
+# v.raw.flags  -> FlagsFrame
 # v.raw.data    -> FlagsFrame
 
 # -----
-# Usage C
+# Usage C  (current)
 # -----
 # v.data    -> pd.Series        masked data
 # v.orig    -> pd.Series        original data
