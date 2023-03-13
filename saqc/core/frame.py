@@ -4,7 +4,6 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from typing import Any, TypeVar
-from saqc.core.generic import FuncMixin
 from saqc.core.variable import Variable
 
 UNFLAGGED = -np.inf
@@ -28,7 +27,7 @@ def _for_each(obj, func, *args, **kwargs):
     return new
 
 
-class SaQC(FuncMixin):
+class SaQC:
     def __init__(
         self,
         data: list[Variable | pd.Series]

@@ -2,7 +2,16 @@
 from __future__ import annotations
 
 
-from typing import Any, TypeVar, Callable, Union, TYPE_CHECKING, final, Collection
+from typing import (
+    Any,
+    TypeVar,
+    Callable,
+    Union,
+    TYPE_CHECKING,
+    final,
+    Collection,
+    Sequence,
+)
 
 import numpy as np
 
@@ -17,30 +26,39 @@ if TYPE_CHECKING:
     from saqc.core.base import BaseVariable
     from saqc.core.variable import Variable
 
-
-# Either Variable or SaQC not the Union of both,
-# that mean tha a function defined like this `foo(a: VarOrQcT) -> VarOrQcT`
-# returns an object of the same type as `a` is.
-# It never takes a Variable and return a SaQC object.
-VarOrQcT = TypeVar("VarOrQcT", "Variable", "SaQC")
-
+# ############################################################
+# Types that are supported with isinstance
+# ############################################################
 SupportsIndex = Union[pd.DataFrame, "Variable", "FlagsFrame"]
 SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
+
 Numeric = Union[int, float]  # we do not accept complex yet
+FlagLike = Numeric
 Scalar = Union[Numeric, str, bool]
-MaskLike = Union[pd.Series, Collection[bool]]
-Cond = Union[MaskLike, pd.Index]
-# MaskerT = Union[Callable[[np.ndarray], np.ndarray] , Callable[[pd.Series], pd.Series]]
-MaskerT = Callable[[np.ndarray], np.ndarray]
-MetaT = dict[str, Any]
-PandasT = Union[pd.Series, pd.DataFrame]
+PandasLike = Union[pd.Series, pd.DataFrame]
 ListLike = Union[pd.Series, list, np.ndarray]
+
+# ############################################################
+# SomeThingT  only for type checker not usable with isinstance
+# ############################################################
+
+# unfortunately Sequence does not work with isinstance
+MaskT = Union[pd.Series, Sequence[bool]]
+CondT = Union[MaskT, pd.Index]  # add Callable[..., MaskT] at some point
+
+MaskerT = Callable[[np.ndarray], np.ndarray]
 
 # VariableT is stricter and ensures that the same subclass of Variable always is
 # used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a
 # MaskedVariable is passed into a function, a MaskedVariable is always
 # returned and if a Variable is passed in, a Variable is always returned.
 VariableT = TypeVar("VariableT", bound="BaseVariable")
+
+# Either Variable or SaQC not the Union of both,
+# that mean tha a function defined like this `foo(a: VarOrQcT) -> VarOrQcT`
+# returns an object of the same type as `a` is.
+# It never takes a Variable and return a SaQC object.
+VarOrQcT = TypeVar("VarOrQcT", "Variable", "SaQC")
 
 # to maintain type information across generic functions and parametrization
 T = TypeVar("T")

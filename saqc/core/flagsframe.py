@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
-from saqc.core.generic import compose
 from copy import deepcopy
 from saqc._typing import SupportsIndex, final
 from saqc.constants import UNFLAGGED
@@ -38,6 +37,11 @@ class Meta:
 
     def to_pandas(self) -> pd.Series:
         return self.copy(deep=True)._raw
+
+    def explode(self) -> pd.DataFrame:
+        meta = self.to_pandas()
+        meta[meta.isna()] = ({}, )
+        return pd.DataFrame(meta.to_list())
 
     @property
     def index(self) -> pd.Index:

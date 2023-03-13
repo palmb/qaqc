@@ -5,7 +5,7 @@ from abc import abstractmethod
 import pandas as pd
 import numpy as np
 
-from saqc._typing import VariableT, final, MaskLike, MaskerT, Cond, ListLike
+from saqc._typing import VariableT, final, MaskT, MaskerT, CondT, ListLike, FlagLike
 from typing import Any, overload, Iterable, Collection, Callable, Union, NoReturn
 
 from saqc.core import utils
@@ -35,7 +35,7 @@ class _Data:
         self,
         raw: Any,
         index: pd.Index | None = None,
-        mask: bool | MaskLike = False,
+        mask: bool | MaskT = False,
         dtype=float,
         fill_value: float = np.nan,
     ):
@@ -80,7 +80,7 @@ class _Data:
         # return pd.Series(self._raw.mask, index=self._index, dtype=bool, copy=False)
 
     @mask.setter
-    def mask(self, value: bool | MaskLike):
+    def mask(self, value: bool | MaskT):
         self._raw.mask = value
 
     @property
@@ -160,7 +160,8 @@ class BaseVariable:
         c._data = self._data.copy(deep)
         c._history = self._history.copy(deep)
         c.masker = self.masker
-        return c._optimize()
+        c._optimize()
+        return c
 
     def _optimize(self):
         # share a single index
@@ -182,15 +183,18 @@ class BaseVariable:
 
     @property
     def orig(self) -> pd.Series:
+        """ Returns a copy of the underlying data (no masking)"""
         return self._data.orig_series
 
     @property
     def data(self) -> pd.Series:
+        """ Returns a copy of the underlying data (masked by flags)"""
         self._update_mask()
         return self._data.masked_series
 
     @property
     def flags(self) -> pd.Series:
+        """ Returns a series of currently set flags"""
         return self._history.current()
 
     @property
@@ -256,7 +260,7 @@ class BaseVariable:
         raise NotImplementedError("use 'set_flags()' instead")
 
     @overload
-    def set_flags(self, value: float | int, cond: Cond, **meta) -> BaseVariable:
+    def set_flags(self, value: FlagLike, cond: CondT, **meta) -> BaseVariable:
         ...
 
     @overload
@@ -269,7 +273,7 @@ class BaseVariable:
         #   cond=bool-listlike, value=scalar
         if cond is None and pd.api.types.is_list_like(value):
             self._history.append(value, **meta)
-        elif utils.is_indexer(cond) and isinstance(value, (float, int)):
+        elif utils.is_indexer(cond) and isinstance(value, FlagLike):
             self._history.append_conditional(value, cond, **meta)
         else:
             raise TypeError(
@@ -374,7 +378,7 @@ class BaseVariable:
             ) from e
 
         string = self.__render_frame(df)
-        meta = repr(self.meta._render_short())
+        meta = str(self.meta._render_short())
         return string + "\n" + meta
 
     @final
@@ -386,7 +390,7 @@ class BaseVariable:
                 df.insert(n, "|", ["|"] * len(df.index))  # noqa
         s = df.to_string(*args, **kwargs).replace("DataFrame", self.__class__.__name__)
         if show_meta:
-            s += "\n" + repr(self.meta._render_short())
+            s += "\n" + str(self.meta._render_short())
         return s
 
     def memory_usage(self, index: bool = True, deep: bool = False) -> pd.Series:

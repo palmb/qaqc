@@ -1,6 +1,14 @@
 #!/usr/bin/env python
 
 
+__all__ = [
+    "ImplementationError",
+    "MaskerError",
+    "MaskerResultError",
+    "MaskerExecutionError"
+]
+
+
 class ImplementationError(Exception):
     pass
 
@@ -30,3 +38,4 @@ class MaskerResultError(MaskerError, TypeError, ValueError):
     # this should catch all Exceptions that arise
     # in `BaseVariable._check_masker_result()`
     pass
+

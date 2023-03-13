@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 from __future__ import annotations
 from typing import Callable, Any
-from saqc._typing import PandasT
 import pandas as pd
 import textwrap
 import collections.abc as abc
@@ -74,12 +73,16 @@ def repr_extended(
     return rpr
 
 
-def is_iterable(obj):
+def is_iterable(obj: Any) -> bool:
     try:
         iter(obj)
     except Exception:
         return False
     return True
+
+
+def is_listlike(obj: Any, allow_sets: bool = False) -> bool:
+    return pd.api.types.is_list_like(obj, allow_sets=allow_sets)
 
 
 def is_boolean_indexer(obj: abc.Iterable) -> bool:
