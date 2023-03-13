@@ -15,7 +15,7 @@ class UnivariateMixin(BaseVariable, ABC):
     def flag_limits(self, lower=-np.inf, upper=np.inf, flag=9) -> BaseVariable:
         result = self.copy().mask_data()
         mask = (result.data < lower) | (result.data > upper)
-        result.history.append_with_mask(mask, flag, meta="flag_limits")
+        result.history.append_conditional(mask, flag, meta="flag_limits")
         return result.unmask_data()
 
     def flag_something(self, flag=99) -> UnivariateMixin:
@@ -29,21 +29,21 @@ class UnivariateMixin(BaseVariable, ABC):
     def flagna(self, flag=999) -> UnivariateMixin:
         # no masking desired !
         result = self.copy()
-        result.history.append_with_mask(result.data.isna(), flag, "flagna")
+        result.history.append_conditional(result.data.isna(), flag, "flagna")
         return result
 
     def replace_flag(self, old, new) -> UnivariateMixin:
         # no masking needed
         result = self.copy()
         mask = self.flags == old
-        result.history.append_with_mask(mask, new, "replace_flag")
+        result.history.append_conditional(mask, new, "replace_flag")
         return result
 
     def flag_generic(self, func, flag=99) -> UnivariateMixin:
         # func ==> ``lambda v: v.data != 3``
         new = self.copy()
         mask = func(self.data)
-        new.history.append_with_mask(mask, flag, "flag_generic")
+        new.history.append_conditional(mask, flag, "flag_generic")
         return new
 
     # ############################################################
@@ -53,7 +53,7 @@ class UnivariateMixin(BaseVariable, ABC):
     # - must return a new Variable
     # - may set new fframe on the new Variable
     # - may use the existing old Flags squeezed to a pd.Series
-    #  (see `FlagsFrame._current`) as the initial fframe for the
+    #  (see `FlagsFrame.current`) as the initial fframe for the
     #  new Variable
     # ############################################################
 

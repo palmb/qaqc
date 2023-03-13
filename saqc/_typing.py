@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-from typing import Any, TypeVar, Callable, Union, TYPE_CHECKING, final
+from typing import Any, TypeVar, Callable, Union, TYPE_CHECKING, final, Collection
 
 import numpy as np
 
@@ -28,11 +28,13 @@ SupportsIndex = Union[pd.DataFrame, "Variable", "FlagsFrame"]
 SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
 Numeric = Union[int, float]  # we do not accept complex yet
 Scalar = Union[Numeric, str, bool]
-MaskLike = Union[pd.Series | bool | list[bool]]
+MaskLike = Union[pd.Series, Collection[bool]]
+Cond = Union[MaskLike, pd.Index]
 # MaskerT = Union[Callable[[np.ndarray], np.ndarray] , Callable[[pd.Series], pd.Series]]
 MaskerT = Callable[[np.ndarray], np.ndarray]
 MetaT = dict[str, Any]
 PandasT = Union[pd.Series, pd.DataFrame]
+ListLike = Union[pd.Series, list, np.ndarray]
 
 # VariableT is stricter and ensures that the same subclass of Variable always is
 # used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a

@@ -5,9 +5,11 @@ from abc import abstractmethod
 import pandas as pd
 import numpy as np
 
-from saqc._typing import VariableT, final, MaskLike, MaskerT
-from typing import Any, overload, Iterable, Collection, Callable, Union
-from saqc.core.flagsframe import FlagsFrame
+from saqc._typing import VariableT, final, MaskLike, MaskerT, Cond, ListLike
+from typing import Any, overload, Iterable, Collection, Callable, Union, NoReturn
+
+from saqc.core import utils
+from saqc.core.flagsframe import FlagsFrame, Meta
 from saqc.constants import UNFLAGGED
 from saqc.errors import (
     MaskerError,
@@ -15,7 +17,15 @@ from saqc.errors import (
     MaskerExecutionError,
 )
 
+__all__ = [
+    "BaseVariable",
+]
 
+
+# This class is private because it is completely
+# shadowed by methods and properties in BaseVariable.
+# A user should not access or create _Data, nor
+# should have need for that.
 class _Data:
     __slots__ = ("_raw", "_index")
     _raw: np.ma.MaskedArray
@@ -104,31 +114,13 @@ class _Data:
 
 
 class BaseVariable:
+    # class variable
+    global_masker: MaskerT | None = None
+
+    # type hints
     _data: _Data
     _history: FlagsFrame
     masker: MaskerT | None
-
-    # size of Variable
-    # --------------------------
-    # _history._raw   (pd.Dataframe)
-    #   .index      pd.Index = datetime64(8) * length
-    #   -> col      float(8) * length * #columns
-    # _data._raw    (MaskedArray)
-    #   .data       float(8) * length
-    #   .mask       bool(1) * length
-    # _data._index  is a reference to _flag._raw.index
-    # --------------------------
-    # (8 + 1 + 8 + 8) * length + (8 * length * columns)
-    # 25B * length + 8B * length * columns
-    # size(column) == size(data) == size(index)
-    # Columns + Data + 2x Index = Columns+3
-    # ==> 8B * length * (columns+3) + 1length [from the mask]
-
-    # vs size of data-series + history-df
-    # Columns + Data + 2x Index = Columns+3
-    # ==> 8B * length * (columns+3)
-
-    global_masker: MaskerT | None = None
 
     @property
     @abstractmethod
@@ -144,12 +136,13 @@ class BaseVariable:
         if isinstance(data, type(self)):
             if flags is None:
                 flags = data._history
-            index = data.index
+            if index is None:
+                index = data.index
             data = data._data._raw
 
         data = _Data(data, index)
 
-        # if no history are given we create an empty FlagsFrame
+        # if no history are given we create an empty FlagsFrame,
         # otherwise we create a FlagsFrame with an initial column.
         # The resulting FlagsFrame will at most have the initial
         # column, even if a multidim object is passed.
@@ -170,12 +163,14 @@ class BaseVariable:
         return c._optimize()
 
     def _optimize(self):
-        # use a single index
+        # share a single index
         self._data._index = self._history._raw.index
+
+    _restore_index = _optimize  # alias for now
 
     @property
     def index(self) -> pd.Index:
-        return self._data.index
+        return self._history.index
 
     @index.setter
     def index(self, value) -> None:
@@ -183,9 +178,7 @@ class BaseVariable:
             self._data.index = value
             self._history.index = value
         finally:
-            # on error this also resets the index
-            # of data with old flags.index
-            self._optimize()
+            self._restore_index()
 
     @property
     def orig(self) -> pd.Series:
@@ -198,11 +191,22 @@ class BaseVariable:
 
     @property
     def flags(self) -> pd.Series:
-        return self._history._current()
+        return self._history.current()
 
     @property
-    def history(self) -> FlagsFrame:
-        return self._history
+    def meta(self) -> Meta:
+        return self._history.meta  # mutable shallow copy
+
+    @meta.setter
+    def meta(self, value: pd.Series | Meta):
+        self._history.meta = value
+
+    # ############################################################
+    # basic functions
+    # ############################################################
+
+    def get_history(self) -> FlagsFrame:
+        return self._history.copy()
 
     def is_masked(self) -> pd.Series:
         """return a boolean series that indicates flagged values"""
@@ -224,38 +228,56 @@ class BaseVariable:
     # Comparisons and Arithmetics
     # ############################################################
 
-    def equals(self, other: Any) -> bool:
+    def equals(self, other: Any, compare_history=False) -> bool:
         return (
             isinstance(other, type(self))
             and self.data.equals(other.data)
-            and self.history.equals(other.history, current=False)
+            and (
+                self._history.equals(other._history)
+                if compare_history
+                else self.flags.equals(other.flags)
+            )
         )
 
     def __eq__(self, other) -> bool:
-        return self.equals(other)
+        # compares data==data and flags==flags
+        return self.equals(other, compare_history=False)
 
-    def __getitem__(self, key):
-        if key in ["data", "mask", "flags"]:
+    def __getitem__(self, key) -> pd.Series:
+        if key in ["data", "flags"]:
             return getattr(self, key)
-        return self._history.__getitem__(key)
+        if key == "mask":
+            return self.is_masked()
+        if key in self._history:
+            return self._history.__getitem__(key)
+        raise KeyError(key)
 
-    def __setitem__(self, key, value):
-        raise NotImplementedError("use 'append_flags' instead")
+    def __setitem__(self, key, value) -> NoReturn:
+        raise NotImplementedError("use 'set_flags()' instead")
 
-    def append_flags(self, value, meta: Any = None) -> BaseVariable:
-        # todo: rename ??
-        #   - append_flags(mask, value, meta)
-        #   - append_flagseries(float-series, meta)
-        #   same for history without flag prefix ??
-        self._history.append(value, meta)
+    @overload
+    def set_flags(self, value: float | int, cond: Cond, **meta) -> BaseVariable:
+        ...
+
+    @overload
+    def set_flags(self, value: ListLike, cond: None = None, **meta) -> BaseVariable:
+        ...
+
+    def set_flags(self, value, cond=None, **meta) -> BaseVariable:
+        # allowed:
+        #   cond=None, value=listlike
+        #   cond=bool-listlike, value=scalar
+        if cond is None and pd.api.types.is_list_like(value):
+            self._history.append(value, **meta)
+        elif utils.is_indexer(cond) and isinstance(value, (float, int)):
+            self._history.append_conditional(value, cond, **meta)
+        else:
+            raise TypeError(
+                "'value' must be float and 'cond' a pd.Index / boolean indexer, "
+                "OR value must be a list-like of floats and cond must be None."
+                f"type cond: {type(cond)}, type value: {type(value)}"
+            )
         return self
-
-    def mask(self):
-        pass
-
-    def set_flags(self, value: pd.Series, **meta):
-        self._history.append(value, **meta)
-        pass
 
     # ############################################################
     # Masker and Masking
@@ -331,8 +353,8 @@ class BaseVariable:
     @final
     def __render_frame(self, df: pd.DataFrame) -> str:
         if not self.index.empty:
-            if 'f0' in df:
-                n = df.columns.get_loc('f0')
+            if "f0" in df:
+                n = df.columns.get_loc("f0")
                 df.insert(n, "|", ["|"] * len(df.index))  # noqa
         return repr(df).replace("DataFrame", self.__class__.__name__)
 
@@ -342,7 +364,7 @@ class BaseVariable:
             df = self.to_pandas()
         except MaskerError as e:
             # now we create a frame without calling masker
-            df = self.history.to_pandas()
+            df = self._history.to_pandas()
             df.insert(0, "flags", self.flags.array)
             df.insert(0, "**ORIG**", self._data._raw.data)
             string = self.__render_frame(df)
@@ -350,19 +372,45 @@ class BaseVariable:
                 f"\n{string}\nUser-set masker failed for repr(), "
                 f"see the prior exception above"
             ) from e
-        return self.__render_frame(df)
+
+        string = self.__render_frame(df)
+        meta = repr(self.meta._render_short())
+        return string + "\n" + meta
 
     @final
-    def to_string(self, *args, **kwargs) -> str:
+    def to_string(self, *args, show_meta=True, **kwargs) -> str:
         df = self.to_pandas()
         if not self.index.empty:
-            if 'f0' in df:
-                n = df.columns.get_loc('f0')
+            if "f0" in df:
+                n = df.columns.get_loc("f0")
                 df.insert(n, "|", ["|"] * len(df.index))  # noqa
         s = df.to_string(*args, **kwargs).replace("DataFrame", self.__class__.__name__)
+        if show_meta:
+            s += "\n" + repr(self.meta._render_short())
         return s
 
     def memory_usage(self, index: bool = True, deep: bool = False) -> pd.Series:
+        # size of Variable
+        # --------------------------
+        # _history._raw   (pd.Dataframe)
+        #   .index      pd.Index = datetime64(8) * length
+        #   -> col      float(8) * length * #columns
+        # _data._raw    (MaskedArray)
+        #   .data       float(8) * length
+        #   .mask       bool(1) * length
+        # _data._index  is a reference to _flag._raw.index
+        # --------------------------
+        # (8 + 1 + 8 + 8) * length + (8 * length * columns)
+        # 25B * length + 8B * length * columns
+        # size(column) == size(data) == size(index)
+        # Columns + Data + 2x Index = Columns+3
+        # ==> 8B * length * (columns+3) + 1length [from the mask]
+
+        # for comparison:
+        # size of a plain data-series and a simple history-df
+        # Columns + Data + 2x Index = Columns+3
+        # ==> 8B * length * (columns+3)
+
         flags_df = self._history._raw
         data = self._data._raw.data
         mask = self._data._raw.mask
@@ -380,10 +428,10 @@ class BaseVariable:
         return result
 
     def to_pandas(self) -> pd.DataFrame:
-        df = self.history.to_pandas()
-        df.insert(0, "flags", self.history._current().array)
+        df = self._history.to_pandas()
+        df.insert(0, "flags", self._history.current().array)
         # to prevent calling masker multiple times
-        # we use private methods.
+        # we use private methods and attributes.
         df.insert(0, "mask", self._get_mask())
         df.insert(0, "data", self._data._raw.filled())
         return df
@@ -404,23 +452,25 @@ if __name__ == "__main__":
     v = Variable([1, 2, 3, 4], dtindex(4))
     print(v)
     v = Variable([1, 2, 3, 999999.0], dtindex(4), pd.Series([N, N, 99, N]))
-    v.history.append([N, 55, 55, N])
-    v.history.append([N, 99, N, N])
+    print(v)
+    v.set_flags([N, 55, 55, N])
+    print(v)
+    v.set_flags([N, 99, N, N])
     print(v)
     runtime_fail = lambda x: 1 / 0
     result_fail = lambda x: x.astype(str)
-    v.masker = result_fail
+    # v.masker = result_fail
     print(v)
     v2 = Variable([])
-    v2.history.append([], meta="la")
+    v2.set_flags([], meta="la")
 
     print(v.memory_usage(deep=True))
     v._optimize()
     print("totoal:", v.memory_usage(deep=True).sum())
     print("pandas:")
     df = v.to_pandas().astype(float)
-    df["mask"] = df["mask"].astype(bool)
     df.drop("flags", axis=1, inplace=True)
+    df.drop("mask", axis=1, inplace=True)
     print(df)
     print(df.memory_usage(deep=True))
     print(df.memory_usage(deep=True).sum())

@@ -42,7 +42,7 @@ if __name__ == "__main__":
     # pd.DataFrame.reindex
     # pd.Series.reindex()
 
-    # a.history._current()
+    # a.history.current()
     #
     # print("a")
     # print(a)

@@ -9,14 +9,74 @@ from saqc._typing import SupportsIndex, final
 from saqc.constants import UNFLAGGED
 import saqc.core.utils as utils
 from typing import Any
+from saqc.core.ops import OpsMixin
 
-# from pandas.core.arraylike import OpsMixin
+__all__ = [
+    "Meta",
+    "FlagsFrame"
+]
 
 
-class FlagsFrame:
+class Meta:
+    __slots__ = ("_raw",)
+    _raw: pd.Series
+
+    def __init__(self):
+        self._raw = pd.Series(dtype=object)
+
+    def copy(self, deep:bool=True) -> Meta:
+        new = self.__class__()
+        if deep:
+            # raw is a pd.Series with object dtype,
+            # and all elements are dicts. This requires
+            # recursive copying, but pandas don't do that.
+            raw = deepcopy(self._raw)
+        else:
+            raw = self._raw.copy(deep=False)
+        new._raw = raw
+        return new
+
+    def to_pandas(self) -> pd.Series:
+        return self.copy(deep=True)._raw
+
+    @property
+    def index(self) -> pd.Index:
+        return self._raw.index
+
+    def __len__(self) -> int:
+        return len(self._raw)
+
+    def __contains__(self, key) -> bool:
+        return self._raw.__contains__(key)
+
+    def __getitem__(self, key) -> dict:
+        return self._raw.__getitem__(key)
+
+    def __setitem__(self, key: str, value: dict):
+        if not isinstance(key, str):
+            raise TypeError(f"Key must be a str, not {type(key)}")
+        if value is not None and not isinstance(value, dict):
+            raise TypeError(f"Value must be a dict or None, not {type(value)}")
+        self._raw.__setitem__(key, value)
+
+    @final
+    def __str__(self):
+        return self.__repr__() + "\n"
+
+    @final
+    def __repr__(self):
+        if self._raw.empty:
+            return "Meta([])"
+        return repr(self._raw)
+
+    def _render_short(self):
+        return f"Meta: {utils.repr_extended(dict(self._raw), kwdicts=True)}"
+
+
+class FlagsFrame(OpsMixin):
     __slots__ = ("_raw", "_meta")
     _raw: pd.DataFrame
-    _meta: pd.Series
+    _meta: Meta
 
     """
     Formerly known as History
@@ -37,7 +97,7 @@ class FlagsFrame:
 
         # special case:  FlagsFrame(flags_frame)
         elif isinstance(index, type(self)):
-            initial = index._current()
+            initial = index.current()
             index = index.index
         else:
             try:
@@ -48,26 +108,18 @@ class FlagsFrame:
         index.name = None
 
         if isinstance(initial, type(self)):
-            initial = initial._current()
+            initial = initial.current()
 
         self._raw = pd.DataFrame(index=index, dtype=float)
-        self._meta = pd.Series(dtype=object)
+        self._meta = Meta()
 
         if initial is not None:
-            self.append(initial, "init")
+            self.append(initial, initial=True)
 
     def copy(self, deep=True) -> FlagsFrame:
         new = self.__class__(self.index)
         new._raw = self._raw.copy(deep)
-        if deep:
-            # meta is a pd.Series with object dtype,
-            # and we allow dicts to be stored there.
-            # This requires recursive copying, but
-            # pandas don't do that.
-            meta = deepcopy(self._meta)
-        else:
-            meta = self._meta.copy(False)
-        new._meta = meta
+        new._meta = self._meta.copy(deep)
         return new
 
     def to_pandas(self) -> pd.DataFrame:
@@ -86,11 +138,29 @@ class FlagsFrame:
         return self._raw.columns
 
     @property
-    def meta(self) -> pd.Series:
+    def meta(self) -> Meta:
         # we use a shallow copy, so the user might
         # modify the data in each row, but deletions
         # and appends won't reflect back on us.
         return self._meta.copy(deep=False)
+
+    @meta.setter
+    def meta(self, value: pd.Series | Meta):
+        if isinstance(value, Meta):
+            meta = value
+        else:
+            assert isinstance(value, pd.Series)
+            meta = Meta()
+            for k, e in value.items():
+                meta[k] = e  # noqa
+        assert value.index.equals(self.columns)
+        self._meta = meta
+
+    def __len__(self):
+        return len(self._raw.columns)
+
+    def __contains__(self, key) -> bool:
+        return self._raw.__contains__(key)
 
     def __getitem__(self, key):
         return self._raw.__getitem__(key).copy()
@@ -98,7 +168,7 @@ class FlagsFrame:
     def __setitem__(self, key, value):
         raise NotImplementedError("use 'append' instead")
 
-    def _current(self) -> pd.Series:
+    def current(self) -> pd.Series:
         if self._raw.empty:
             result = pd.Series(data=np.nan, index=self.index, dtype=float)
         else:
@@ -111,10 +181,10 @@ class FlagsFrame:
     def is_unflagged(self) -> pd.DataFrame:
         return self._raw == UNFLAGGED
 
-    def append_with_mask(self, mask, flag: float | int, meta: Any = None) -> FlagsFrame:
+    def append_conditional(self, flag: float | int, cond, **meta) -> FlagsFrame:
         new = pd.Series(np.nan, index=self.index, dtype=float)
-        new[mask] = float(flag)
-        return self.append(new, meta)
+        new[cond] = float(flag)
+        return self.append(new, **meta)
 
     def append(self, value, **meta) -> FlagsFrame:
         value = pd.Series(value, dtype=float)
@@ -124,35 +194,23 @@ class FlagsFrame:
         self._meta[col] = meta or None
         return self
 
+    # ############################################################
+    # Comparison
+    # ############################################################
+
     def equals(self, other: FlagsFrame) -> bool:
         return isinstance(other, type(self)) and self._raw.equals(other._raw)
 
-    def __len__(self):
-        return len(self._raw.columns)
-
-    @staticmethod
-    def __bool_cmp__(funcname):
-        def cmp(self, other: FlagsFrame) -> pd.Series:
-            if isinstance(other, self.__class__):
-                other = other._raw
-            df: pd.DataFrame = self._raw
-            if isinstance(other, pd.DataFrame):
-                if not df.columns.equals(other.columns):
-                    raise ValueError("Columns does not match")
-                if not df.index.equals(other.index):
-                    raise ValueError("Index does not match")
-            return getattr(df, funcname)(other)
-
-        return cmp
-
-    __contains__ = compose("_raw", "__contains__")
-    __iter__ = compose("_raw", "__iter__")
-    __eq__ = __bool_cmp__("__ge__")
-    __ne__ = __bool_cmp__("__ge__")
-    __gt__ = __bool_cmp__("__ge__")
-    __ge__ = __bool_cmp__("__ge__")
-    __lt__ = __bool_cmp__("__lt__")
-    __le__ = __bool_cmp__("__le__")
+    def _cmp_method(self, other, op):
+        if isinstance(other, self.__class__):
+            other = other._raw
+        df: pd.DataFrame = self._raw
+        if isinstance(other, pd.DataFrame):
+            if not df.columns.equals(other.columns):
+                raise ValueError("Columns does not match")
+            if not df.index.equals(other.index):
+                raise ValueError("Index does not match")
+        return op(df, other)
 
     # ############################################################
     # Rendering
@@ -164,18 +222,18 @@ class FlagsFrame:
 
     @final
     def __repr__(self) -> str:
-        string = repr(self.to_pandas()).replace("DataFrame", self.__class__.__name__)
-        meta = dict(self.meta)
-        string += f"\nMeta: {utils.repr_extended(meta, kwdicts=True)}"
-        return string
+        data = repr(self.to_pandas()).replace("DataFrame", self.__class__.__name__)
+        meta = repr(self._meta)
+        return data + "\n" + meta
 
     @final
     def to_string(self, *args, show_meta=True, **kwargs) -> str:
+        meta = f"\n{repr(self._meta)}" if show_meta else ""
         return (
             self.to_pandas()
             .to_string(*args, **kwargs)
             .replace("DataFrame", self.__class__.__name__)
-        )
+        ) + meta
 
 
 if __name__ == "__main__":
@@ -193,7 +251,7 @@ if __name__ == "__main__":
     ff2.append([N, N, N])
     print(ff)
     print(ff2)
-    print(ff == ff2)
+    print(ff2 == ff2)
     ff2.append([N, 99, N])
     print(ff2)
     print(ff == ff2)
