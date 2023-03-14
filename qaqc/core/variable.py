@@ -6,11 +6,11 @@ from typing import Callable, Union, Any
 import pandas as pd
 import numpy as np
 
-from saqc import UNFLAGGED
-from saqc.core.base import BaseVariable
-from saqc._typing import FlagLike
-import saqc.core.utils as utils
-from saqc.core.utils import get_caller as this
+from qaqc import UNFLAGGED
+from qaqc.core.base import BaseVariable
+from qaqc._typing import FlagLike
+import qaqc.core.utils as utils
+from qaqc.core.utils import get_caller as this
 
 __all__ = ["Variable"]
 
@@ -118,8 +118,8 @@ class Variable(BaseVariable):  # noqa
 
 
 if __name__ == "__main__":
-    from saqc._testing import dtindex, N
-    from saqc.core.variable import Variable
+    from qaqc._testing import dtindex, N
+    from qaqc.core.variable import Variable
 
     def do1(data):
         return data == 3

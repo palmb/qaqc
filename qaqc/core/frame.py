@@ -7,9 +7,9 @@ import pandas as pd
 import numpy as np
 from sliceable_dict import TypedSliceDict
 
-from saqc.constants import UNFLAGGED
-from saqc._typing import T
-from saqc.core.variable import Variable
+from qaqc.constants import UNFLAGGED
+from qaqc._typing import T
+from qaqc.core.variable import Variable
 
 # Wording
 # data : a single Series holding the actual data
@@ -21,7 +21,7 @@ from saqc.core.variable import Variable
 
 
 def _for_each(obj, func, *args, **kwargs):
-    new = SaQCFrame()
+    new = QaqcFrame()
     for key, var in obj._vars.items():
         var = obj[key].copy()
         result = func(var, *args, **kwargs)
@@ -39,9 +39,9 @@ class _Vars(TypedSliceDict):
         return key, value
 
 
-class SaQCFrame:
+class QaqcFrame:
     @property
-    def _constructor(self: SaQCFrame) -> type[SaQCFrame]:
+    def _constructor(self: QaqcFrame) -> type[QaqcFrame]:
         return type(self)
 
     def __init__(
@@ -55,7 +55,7 @@ class SaQCFrame:
     ):
         self._vars: _Vars = _Vars(data)
 
-    def copy(self, deep: bool = True) -> SaQCFrame:
+    def copy(self, deep: bool = True) -> QaqcFrame:
         cls = self.__class__
         if deep:
             return cls(data={k: v.copy(deep=True) for k, v in self._vars.items()})
@@ -69,7 +69,7 @@ class SaQCFrame:
     def columns(self) -> pd.Index:
         return pd.Index(self._vars.keys())
 
-    def __getitem__(self, key) -> Variable | SaQCFrame:
+    def __getitem__(self, key) -> Variable | QaqcFrame:
         raw = self._vars.__getitem__(key)
         if isinstance(raw, _Vars):
             raw = self._constructor(raw).copy()
@@ -85,8 +85,8 @@ class SaQCFrame:
             df[f"{k}-flags"] = var.flags
         print(df)
 
-    def _for_each(self, func: Callable[..., Variable], *args, **kwargs) -> SaQCFrame:
-        new = SaQCFrame()
+    def _for_each(self, func: Callable[..., Variable], *args, **kwargs) -> QaqcFrame:
+        new = QaqcFrame()
         for key, var in self._vars.items():
             var = self[key].copy()
             result = func(var, *args, **kwargs)

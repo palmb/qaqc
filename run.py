@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 import pandas as pd
-from saqc import Variable, SaQC
+from qaqc import Variable, SaQC
 
 
 if __name__ == "__main__":

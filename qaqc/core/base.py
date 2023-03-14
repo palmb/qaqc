@@ -5,13 +5,23 @@ from abc import abstractmethod
 import pandas as pd
 import numpy as np
 
-from saqc._typing import final, MaskT, MaskerT, CondT, ListLike, FlagLike, T, VariableT
+from qaqc._typing import (
+    final,
+    MaskT,
+    MaskerT,
+    CondT,
+    ListLike,
+    FlagLike,
+    T,
+    VariableT,
+    Variable,
+)
 from typing import Any, overload, TYPE_CHECKING, NoReturn, cast
 
-from saqc.core import utils
-from saqc.core.flagsframe import FlagsFrame, Meta
-from saqc.constants import UNFLAGGED
-from saqc.errors import (
+from qaqc.core import utils
+from qaqc.core.flagsframe import FlagsFrame, Meta
+from qaqc.constants import UNFLAGGED
+from qaqc.errors import (
     MaskerError,
     MaskerResultError,
     MaskerExecutionError,
@@ -465,7 +475,7 @@ if __name__ == "__main__":
         def _constructor(self: TestVariable) -> type[TestVariable]:
             return type(self)
 
-    from saqc._testing import dtindex, N
+    from qaqc._testing import dtindex, N
 
     v = TestVariable([1, 2, 3, 4], dtindex(4))
     print(v)

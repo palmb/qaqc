@@ -17,7 +17,7 @@ import pandas as pd
 from numpy.typing import NDArray
 
 
-from saqc.core.utils import FuncInfo  # noqa
+from qaqc.core.utils import FuncInfo  # noqa
 
 try:
     from typing import final  # py3.8+
@@ -25,15 +25,15 @@ except ImportError:
     final = lambda x: x  # noqa
 
 if TYPE_CHECKING:
-    from saqc.core.flagsframe import FlagsFrame  # noqa
-    from saqc.core.base import BaseVariable  # noqa
-    from saqc.core.variable import Variable  # noqa
-    from saqc.core.frame import SaQCFrame
+    from qaqc.core.flagsframe import FlagsFrame
+    from qaqc.core.base import BaseVariable
+    from qaqc.core.variable import Variable
+    from qaqc.core.frame import QaqcFrame
 else:
     FlagsFrame = "FlagsFrame"
     BaseVariable = "BaseVariable"
     Variable = "Variable"
-    SaQCFrame = "SaQCFrame"
+    QaqcFrame = "QaqcFrame"
 
 # ############################################################
 # Types that are supported with isinstance
@@ -73,7 +73,7 @@ VariableT = TypeVar("VariableT", bound=BaseVariable)
 # that mean tha a function defined like this `foo(a: VarOrQcT) -> VarOrQcT`
 # returns an object of the same type as `a` is.
 # It never takes a Variable and return a SaQC object.
-VarOrQcT = TypeVar("VarOrQcT", Variable, SaQCFrame)
+VarOrQcT = TypeVar("VarOrQcT", Variable, QaqcFrame)
 
 # to maintain type information across generic functions and parametrization
 T = TypeVar("T")

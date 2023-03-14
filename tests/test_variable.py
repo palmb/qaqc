@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from saqc import Variable
+from qaqc import Variable
 
 
 @pytest.mark.parametrize("data", [[1, 2, 3], pd.Series([0, 1]), range(4)])

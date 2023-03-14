@@ -4,11 +4,11 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from copy import deepcopy
-from saqc._typing import SupportsIndex, final
-from saqc.constants import UNFLAGGED
-import saqc.core.utils as utils
+from qaqc._typing import SupportsIndex, final
+from qaqc.constants import UNFLAGGED
+import qaqc.core.utils as utils
 from typing import Any
-from saqc.core.ops import OpsMixin
+from qaqc.core.ops import OpsMixin
 
 __all__ = ["Meta", "FlagsFrame"]
 
@@ -236,7 +236,7 @@ class FlagsFrame(OpsMixin):
 
 
 if __name__ == "__main__":
-    from saqc._testing import dtindex, N
+    from qaqc._testing import dtindex, N
 
     s = pd.Series([1, 2, 3], index=dtindex(3))
     ff = FlagsFrame(pd.Index([]))
