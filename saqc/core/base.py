@@ -492,7 +492,7 @@ if __name__ == "__main__":
     print(df)
     print(df.memory_usage(deep=True))
     print(df.memory_usage(deep=True).sum())
-    v.set_flags(99., np.array([1, "la"], dtype=str))
+    v.set_flags(99.0, np.array([1, "la"], dtype=str))
 
     print()
     print(v.to_string())

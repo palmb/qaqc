@@ -58,9 +58,7 @@ class SaQCFrame:
     def copy(self, deep: bool = True) -> SaQCFrame:
         cls = self.__class__
         if deep:
-            return cls(
-                data={k: v.copy(deep=True) for k, v in self._vars.items()}
-            )
+            return cls(data={k: v.copy(deep=True) for k, v in self._vars.items()})
         c = cls.__new__(cls)
         # Changes on existing variables (e.g. the masking by new flags)
         # will reflect back on the variables of the copy and vice-versa.
