@@ -8,7 +8,7 @@ import numpy as np
 from sliceable_dict import TypedSliceDict
 
 from qaqc.constants import UNFLAGGED
-from qaqc._typing import T
+from qaqc.typing import T
 from qaqc.core.variable import Variable
 
 # Wording

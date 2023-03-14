@@ -3,9 +3,10 @@ from __future__ import annotations
 
 
 import pandas as pd
-from qaqc import Variable, SaQC
+from qaqc import Variable, QaqcFrame
 
 
+description = "Quality control for data series"
 if __name__ == "__main__":
     s = pd.Series(range(5), dtype=float)
     f = Variable(s)

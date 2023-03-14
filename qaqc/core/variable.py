@@ -8,7 +8,7 @@ import numpy as np
 
 from qaqc import UNFLAGGED
 from qaqc.core.base import BaseVariable
-from qaqc._typing import FlagLike
+from qaqc.typing import FlagLike
 import qaqc.core.utils as utils
 from qaqc.core.utils import get_caller as this
 

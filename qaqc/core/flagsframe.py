@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from copy import deepcopy
-from qaqc._typing import SupportsIndex, final
+from qaqc.typing import SupportsIndex, final
 from qaqc.constants import UNFLAGGED
 import qaqc.core.utils as utils
 from typing import Any
@@ -229,7 +229,7 @@ class FlagsFrame(OpsMixin):
     def to_string(self, *args, show_meta=True, **kwargs) -> str:
         meta = f"\n{repr(self._meta)}" if show_meta else ""
         return (
-            self.to_pandas()
+            self.to_pandas()  # type: ignore
             .to_string(*args, **kwargs)
             .replace("DataFrame", self.__class__.__name__)
         ) + meta

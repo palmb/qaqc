@@ -1,0 +1,4 @@
+mypy
+pytest
+black
+pandas-stubs

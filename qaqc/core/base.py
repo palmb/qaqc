@@ -5,16 +5,14 @@ from abc import abstractmethod
 import pandas as pd
 import numpy as np
 
-from qaqc._typing import (
+from qaqc.typing import (
     final,
     MaskT,
     MaskerT,
     CondT,
     ListLike,
     FlagLike,
-    T,
     VariableT,
-    Variable,
 )
 from typing import Any, overload, TYPE_CHECKING, NoReturn, cast
 
@@ -383,7 +381,7 @@ class BaseVariable:
         if not self.index.empty:
             if "f0" in df:
                 n = df.columns.get_loc("f0")
-                df.insert(n, "|", ["|"] * len(df.index))  # noqa
+                df.insert(n, "|", ["|"] * len(df.index))  # type: ignore
         return repr(df).replace("DataFrame", self.__class__.__name__)
 
     @final
@@ -411,8 +409,10 @@ class BaseVariable:
         if not self.index.empty:
             if "f0" in df:
                 n = df.columns.get_loc("f0")
-                df.insert(n, "|", ["|"] * len(df.index))  # noqa
-        s = df.to_string(*args, **kwargs).replace("DataFrame", self.__class__.__name__)
+                df.insert(n, "|", ["|"] * len(df.index))  # type: ignore
+        s = df.to_string(*args, **kwargs).replace(  # type: ignore
+            "DataFrame", self.__class__.__name__
+        )
         if show_meta:
             s += "\n" + str(self.meta._render_short())
         return s

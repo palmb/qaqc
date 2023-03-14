@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qaqc"
+version = "0.0.1"
+authors = [
+  { name="Bert Palm", email="bert.palm.home@gmail.com" },
+]
+description = "Quality control for data series"
+readme = "Readme.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "typing_extensions > 4.0.0",
+    "sliceable-dict >= 0.2.0",
+    "pandas > 1.0.0",
+    "numpy > 1.0.0",
+]
+
+[project.optional-dependencies]
+tests = [
+    'black',
+    'pytest',
+    "mypy",
+    "pytest",
+    "black",
+    "pandas-stubs",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/palmb/qaqc"
+"Bug Tracker" = "https://github.com/palmb/qaqc/issues"

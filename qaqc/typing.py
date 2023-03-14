@@ -19,10 +19,7 @@ from numpy.typing import NDArray
 
 from qaqc.core.utils import FuncInfo  # noqa
 
-try:
-    from typing import final  # py3.8+
-except ImportError:
-    final = lambda x: x  # noqa
+from typing_extensions import final, Final  # noqa
 
 if TYPE_CHECKING:
     from qaqc.core.flagsframe import FlagsFrame
