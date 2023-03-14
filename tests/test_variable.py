@@ -5,13 +5,8 @@ import pandas as pd
 import pytest
 from saqc import Variable
 
-@pytest.mark.parametrize(
-    'data', [
-        [1,2,3],
-        pd.Series([0,1]),
-        range(4)
-    ]
-)
+
+@pytest.mark.parametrize("data", [[1, 2, 3], pd.Series([0, 1]), range(4)])
 def test_construct(data):
     v = Variable(data)
     assert isinstance(v, Variable)

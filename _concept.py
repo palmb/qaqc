@@ -184,6 +184,7 @@ from pandas._typing import F
 # v.fframe.current()    -> pd.Series      same as v.flags
 # v.fframe.df           -> pd.DataFrame   raw flags frame (f0, f1, f2, ...)
 
+
 # -----
 # Usage D
 # -----
@@ -302,7 +303,7 @@ class Frame(MutableMapping):
 
 
 class Variable:
-    def __init__(self, data=None, index=None, flags=None, meta=None): # noqa
+    def __init__(self, data=None, index=None, flags=None, meta=None):  # noqa
         data = pd.Series(data, index=index, dtype=float)
         self.data = data
         if flags is None:
@@ -390,9 +391,7 @@ if __name__ == "__main__":
     df["bat(orig)"] = df["bat"].copy()
     df["bat"] = df["bat"].reindex(df["d"].index, method="ffill")
     df["d"] = df["d"].flag_generic(lambda x: df["bat"].data < 10.2)
-    df = df.flag_generic(
-        lambda x: x["bat"].data < 10.1, flag=55, subset=["d", "bat"]
-    )
+    df = df.flag_generic(lambda x: x["bat"].data < 10.1, flag=55, subset=["d", "bat"])
     print(df)
     print(df["d"])
     print(df["bat"])

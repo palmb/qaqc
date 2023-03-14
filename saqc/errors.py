@@ -5,7 +5,7 @@ __all__ = [
     "ImplementationError",
     "MaskerError",
     "MaskerResultError",
-    "MaskerExecutionError"
+    "MaskerExecutionError",
 ]
 
 
@@ -38,4 +38,3 @@ class MaskerResultError(MaskerError, TypeError, ValueError):
     # this should catch all Exceptions that arise
     # in `BaseVariable._check_masker_result()`
     pass
-

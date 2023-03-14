@@ -12,9 +12,7 @@ from saqc._typing import FlagLike
 import saqc.core.utils as utils
 from saqc.core.utils import get_caller as this
 
-__all__ = [
-    "Variable"
-]
+__all__ = ["Variable"]
 
 # todo: Feature: #tags
 # todo: Feature: translation
