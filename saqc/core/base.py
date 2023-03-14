@@ -5,8 +5,8 @@ from abc import abstractmethod
 import pandas as pd
 import numpy as np
 
-from saqc._typing import VariableT, final, MaskT, MaskerT, CondT, ListLike, FlagLike
-from typing import Any, overload, Iterable, Collection, Callable, Union, NoReturn
+from saqc._typing import final, MaskT, MaskerT, CondT, ListLike, FlagLike, T, VariableT
+from typing import Any, overload, TYPE_CHECKING, NoReturn, cast
 
 from saqc.core import utils
 from saqc.core.flagsframe import FlagsFrame, Meta
@@ -48,7 +48,7 @@ class _Data:
             raise NotImplementedError("Only float dtype is supported.")
 
         if isinstance(mask, pd.Series):
-            mask = mask.array
+            mask = mask.to_numpy()
 
         series = pd.Series(raw, index=index, dtype=dtype)
         self._raw = np.ma.MaskedArray(
@@ -208,7 +208,7 @@ class BaseVariable:
 
     @meta.setter
     def meta(self, value: pd.Series | Meta):
-        self._history.meta = value
+        self._history.meta = value  # type: ignore
 
     # ############################################################
     # basic functions
@@ -265,20 +265,24 @@ class BaseVariable:
         raise NotImplementedError("use 'set_flags()' instead")
 
     @overload
-    def set_flags(self, value: FlagLike, cond: CondT = None, **meta) -> BaseVariable:
+    def set_flags(
+        self: VariableT, value: FlagLike, cond: CondT | None = None, **meta
+    ) -> VariableT:
         ...
 
     @overload
-    def set_flags(self, value: ListLike, cond: None = None, **meta) -> BaseVariable:
+    def set_flags(
+        self: VariableT, value: ListLike, cond: None = None, **meta
+    ) -> VariableT:
         ...
 
-    def set_flags(self, value, cond=None, **meta) -> BaseVariable:
+    def set_flags(self, value, cond=None, **meta):
         # allowed:
         #   cond=None, value=listlike
         #   cond=bool-listlike, value=scalar
         if cond is None and pd.api.types.is_list_like(value):
             self._history.append(value, **meta)
-        elif utils.is_indexer(cond) and isinstance(value, FlagLike):
+        elif utils.is_indexer(cond) and isinstance(value, (int, float)):
             self._history.append_conditional(value, cond, **meta)
         else:
             raise TypeError(
@@ -373,7 +377,7 @@ class BaseVariable:
         except MaskerError as e:
             # now we create a frame without calling masker
             df = self._history.to_pandas()
-            df.insert(0, "flags", self.flags.array)
+            df.insert(0, "flags", self.flags.array)  # type: ignore
             df.insert(0, "**ORIG**", self._data._raw.data)
             string = self.__render_frame(df)
             raise RuntimeError(
@@ -437,7 +441,7 @@ class BaseVariable:
 
     def to_pandas(self) -> pd.DataFrame:
         df = self._history.to_pandas()
-        df.insert(0, "flags", self._history.current().array)
+        df.insert(0, "flags", self._history.current().array)  # type: ignore
         # to prevent calling masker multiple times
         # we use private methods and attributes.
         df.insert(0, "mask", self._get_mask())
@@ -447,19 +451,19 @@ class BaseVariable:
 
 if __name__ == "__main__":
 
-    class Variable(BaseVariable):
+    class TestVariable(BaseVariable):
         def __init__(self, data, index=None, flags=None):
             super().__init__(data=data, index=index, flags=flags)
 
         @property
-        def _constructor(self: VariableT) -> type[VariableT]:
+        def _constructor(self: TestVariable) -> type[TestVariable]:
             return type(self)
 
     from saqc._testing import dtindex, N
 
-    v = Variable([1, 2, 3, 4], dtindex(4))
+    v = TestVariable([1, 2, 3, 4], dtindex(4))
     print(v)
-    v = Variable([1, 2, 3, 999999.0], dtindex(4), pd.Series([N, N, 99, N]))
+    v = TestVariable([1, 2, 3, 999999.0], dtindex(4), pd.Series([N, N, 99, N]))
     print(v)
     v.set_flags([N, 55, 55, N])
     print(v)
@@ -469,7 +473,7 @@ if __name__ == "__main__":
     result_fail = lambda x: x.astype(str)
     # v.masker = result_fail
     print(v)
-    v2 = Variable([])
+    v2 = TestVariable([])
     v2.set_flags([], meta="la")
 
     print(v.memory_usage(deep=True))
@@ -482,6 +486,7 @@ if __name__ == "__main__":
     print(df)
     print(df.memory_usage(deep=True))
     print(df.memory_usage(deep=True).sum())
+    v.set_flags(99., np.array([1, "la"], dtype=str))
 
     print()
     print(v.to_string())

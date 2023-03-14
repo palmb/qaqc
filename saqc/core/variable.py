@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Union, Any
 
 import pandas as pd
 import numpy as np
@@ -60,7 +60,8 @@ class Variable(BaseVariable):  # noqa
 
     def flag_generic(
         self,
-        func: Callable[[np.ndarray], np.ndarray] | Callable[[pd.Series], pd.Series],
+        # func: Callable[[FloatSeries], BoolSeries] | Callable[[FloatArray], BoolArray],
+        func: Callable[..., pd.Series | np.ndarray],
         raw: bool = False,
         flag: FlagLike = 99,
     ) -> Variable:
@@ -70,12 +71,12 @@ class Variable(BaseVariable):  # noqa
 
         data = self.data
         if raw:
-            data = data.to_numpy()
+            data = data.to_numpy()  # type: ignore
         mask = func(data)
 
         if pd.api.types.is_iterator(mask):
             # eg. lambda data: (d==99 for d in data)
-            mask = list(mask)
+            mask = list(mask)  # type: ignore
 
         if not utils.is_listlike(mask) or not utils.is_boolean_indexer(mask):
             raise TypeError(
@@ -101,7 +102,7 @@ class Variable(BaseVariable):  # noqa
         data = self.data.clip(lower, upper)
         return self._constructor(data, flags, index=self.index)
 
-    def interpolate(self, flag: FlagLike = None) -> Variable:
+    def interpolate(self, flag: FlagLike | None = None) -> Variable:
         # todo: meta
         if flag is not None:
             flags = self.flagna(flag).flags

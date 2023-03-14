@@ -53,7 +53,7 @@ class Meta:
     def __getitem__(self, key) -> dict:
         return self._raw.__getitem__(key)
 
-    def __setitem__(self, key: str, value: dict):
+    def __setitem__(self, key: str, value: dict | None):
         if not isinstance(key, str):
             raise TypeError(f"Key must be a str, not {type(key)}")
         if value is not None and not isinstance(value, dict):
@@ -89,11 +89,15 @@ class FlagsFrame(OpsMixin):
 
     def __init__(self, index: Any = None, initial: SupportsIndex | None = None) -> None:
         if index is None:
-            if hasattr(initial, "index") and isinstance(initial.index, pd.Index):
+            if (
+                initial is not None
+                and hasattr(initial, "index")
+                and isinstance(initial.index, pd.Index)
+            ):
                 index = initial.index
             else:
                 raise TypeError(
-                    "If no 'index' is given, 'initial' must " "have a pandas.Index."
+                    "If no 'index' is given, 'initial' must have a pandas.Index."
                 )
         # special case:  FlagsFrame(flags_frame)
         elif isinstance(index, type(self)):
@@ -147,7 +151,7 @@ class FlagsFrame(OpsMixin):
             assert isinstance(value, pd.Series)
             meta = Meta()
             for k, e in value.items():
-                meta[k] = e  # noqa
+                meta[k] = e  # type: ignore
         assert value.index.equals(self.columns)
         self._meta = meta
 
@@ -196,7 +200,7 @@ class FlagsFrame(OpsMixin):
     def equals(self, other: FlagsFrame) -> bool:
         return isinstance(other, type(self)) and self._raw.equals(other._raw)
 
-    def _cmp_method(self, other, op):
+    def _cmp_method(self, other: Any, op) -> pd.DataFrame:
         if isinstance(other, self.__class__):
             other = other._raw
         df: pd.DataFrame = self._raw

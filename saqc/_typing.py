@@ -8,45 +8,55 @@ from typing import (
     Callable,
     Union,
     TYPE_CHECKING,
-    final,
     Collection,
     Sequence,
 )
 
 import numpy as np
+import pandas as pd
+from numpy.typing import NDArray
+
+
+from saqc.core.utils import FuncInfo  # noqa
 
 try:
-    from typing import Self
+    from typing import final  # py3.8+
 except ImportError:
-    Self = TypeVar("Self")
-
-import pandas as pd
+    final = lambda x: x  # noqa
 
 if TYPE_CHECKING:
-    from saqc.core.base import BaseVariable
-    from saqc.core.variable import Variable
+    from saqc.core.flagsframe import FlagsFrame  # noqa
+    from saqc.core.base import BaseVariable  # noqa
+    from saqc.core.variable import Variable  # noqa
+    from saqc.core.frame import SaQC  # noqa
 
 # ############################################################
 # Types that are supported with isinstance
 # ############################################################
-SupportsIndex = Union[pd.DataFrame, "Variable", "FlagsFrame"]
+SupportsIndex = Union[pd.DataFrame, pd.Series, "Variable", "FlagsFrame"]
 SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
 
-Numeric = Union[int, float]  # we do not accept complex yet
+Numeric = Union[int, float]  # we do not accept complex (yet?)
 FlagLike = Numeric
 Scalar = Union[Numeric, str, bool]
 PandasLike = Union[pd.Series, pd.DataFrame]
-ListLike = Union[pd.Series, list, np.ndarray]
+ListLike = Union[pd.Series, list, NDArray]
 
 # ############################################################
 # SomeThingT  only for type checker not usable with isinstance
 # ############################################################
 
-# unfortunately Sequence does not work with isinstance
-MaskT = Union[pd.Series, Sequence[bool]]
+# FloatSeries = TypeVar("FloatSeries", bound=pd.Series)
+# FloatArray = TypeVar("FloatArray", bound=np.ndarray)
+# BoolSeries = TypeVar("BoolSeries", bound=pd.Series)
+# BoolArray = TypeVar("BoolArray", bound=np.ndarray)
+
+# unfortunately Sequence is not overwrite subclasshook and so
+# does not work reliable with isinstance
+MaskT = Union[pd.Series, NDArray, Sequence[bool]]
 CondT = Union[MaskT, pd.Index]  # add Callable[..., MaskT] at some point
 
-MaskerT = Callable[[np.ndarray], np.ndarray]
+MaskerT = Callable[[NDArray], NDArray]
 
 # VariableT is stricter and ensures that the same subclass of Variable always is
 # used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Dict
 from saqc.core.variable import Variable
 
 UNFLAGGED = -np.inf
@@ -36,7 +36,7 @@ class SaQC:
         | Variable
         | None = None,
     ):
-        self._vars = dict()
+        self._vars: Dict[str, Variable] = dict()
 
     vars = property(lambda self: self._vars)
 
@@ -70,10 +70,9 @@ class SaQC:
             return
         raise TypeError(f"Expected key of type str, Index or list, not {type(value)}")
 
-    def show(self):
+    def show(self) -> None:
         df = pd.DataFrame()
         for k, var in self._vars.items():
-            var: Variable
             df[f"{k}-data"] = var.data
             df[f"{k}-fflags"] = var.flags
         print(df)
