@@ -66,6 +66,12 @@ class _Data:
                 fill_value=self.fill_value,
             )
         c = cls.__new__(cls)
+        # Setting the very same obj here is ok, because
+        # _raw.data and _index are basically immutable
+        # by the public api, especially if accessed via
+        # Variable. Nevertheless, changes on _raw.mask
+        # (e.g. if new flags are set in Variable) will
+        # reflect back on the copy and vice-versa.
         c._raw = self._raw
         c._index = self.index
         return c

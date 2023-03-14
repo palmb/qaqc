@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+from typing import Callable
+
 import pandas as pd
 import numpy as np
-from typing import Any, TypeVar, Dict
-from saqc.core.variable import Variable
+from sliceable_dict import TypedSliceDict
 
-UNFLAGGED = -np.inf
-T = TypeVar("T")
+from saqc.constants import UNFLAGGED
+from saqc._typing import T
+from saqc.core.variable import Variable
 
 # Wording
 # data : a single Series holding the actual data
@@ -19,7 +21,7 @@ T = TypeVar("T")
 
 
 def _for_each(obj, func, *args, **kwargs):
-    new = SaQC()
+    new = SaQCFrame()
     for key, var in obj._vars.items():
         var = obj[key].copy()
         result = func(var, *args, **kwargs)
@@ -27,63 +29,66 @@ def _for_each(obj, func, *args, **kwargs):
     return new
 
 
-class SaQC:
+class _Vars(TypedSliceDict):
+    _key_types = (str,)
+    _value_types = (Variable,)
+
+    def _cast(self, key: str, value: pd.Series | Variable):
+        if isinstance(value, pd.Series):
+            value = Variable(value)
+        return key, value
+
+
+class SaQCFrame:
+    @property
+    def _constructor(self: SaQCFrame) -> type[SaQCFrame]:
+        return type(self)
+
     def __init__(
         self,
         data: list[Variable | pd.Series]
+        | dict[str, Variable]
         | pd.DataFrame
         | pd.Series
         | Variable
         | None = None,
     ):
-        self._vars: Dict[str, Variable] = dict()
+        self._vars: _Vars = _Vars(data)
 
-    vars = property(lambda self: self._vars)
-
-    def saqc_only_meth(self):
-        pass
-
-    def __getitem__(self, item):
-        return self._vars[item]
-
-    def __setitem__(self, key, value):
-        if isinstance(key, str):
-            if isinstance(value, pd.Series):
-                value = Variable(value)
-            if isinstance(value, Variable):
-                self._vars[key] = value
-                return
-            raise TypeError(
-                f"Expected value of type Series or Variable, not {type(value)}"
+    def copy(self, deep: bool = True) -> SaQCFrame:
+        cls = self.__class__
+        if deep:
+            return cls(
+                data={k: v.copy(deep=True) for k, v in self._vars.items()}
             )
+        c = cls.__new__(cls)
+        # Changes on existing variables (e.g. the masking by new flags)
+        # will reflect back on the variables of the copy and vice-versa.
+        c._vars = _Vars(self._vars)
+        return c
 
-        if isinstance(key, (list, pd.Index)):
-            if not len(key) == len(value):
-                raise ValueError(f"Got {len(key)} keys, but {len(value)} values.")
-            _vars = dict(self._vars)  # shallow copy
-            try:
-                for k, v in zip(key, value):
-                    self.__setitem__(k, v)
-                _vars = self._vars
-            finally:
-                self._vars = _vars
-            return
-        raise TypeError(f"Expected key of type str, Index or list, not {type(value)}")
+    @property
+    def columns(self) -> pd.Index:
+        return pd.Index(self._vars.keys())
+
+    def __getitem__(self, key) -> Variable | SaQCFrame:
+        raw = self._vars.__getitem__(key)
+        if isinstance(raw, _Vars):
+            raw = self._constructor(raw).copy()
+        return raw
+
+    def __setitem__(self, key, value: Variable | pd.Series) -> None:
+        self._vars.__setitem__(key, value)
 
     def show(self) -> None:
         df = pd.DataFrame()
         for k, var in self._vars.items():
             df[f"{k}-data"] = var.data
-            df[f"{k}-fflags"] = var.flags
+            df[f"{k}-flags"] = var.flags
         print(df)
 
-    def copy(self):
-        new = SaQC()
-        new._vars = {k: v.copy() for k, v in self._vars.items()}
-        return new
-
-    def _for_each(self, func, *args, **kwargs):
-        new = SaQC()
+    def _for_each(self, func: Callable[..., Variable], *args, **kwargs) -> SaQCFrame:
+        new = SaQCFrame()
         for key, var in self._vars.items():
             var = self[key].copy()
             result = func(var, *args, **kwargs)

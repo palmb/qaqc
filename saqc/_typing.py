@@ -28,13 +28,18 @@ if TYPE_CHECKING:
     from saqc.core.flagsframe import FlagsFrame  # noqa
     from saqc.core.base import BaseVariable  # noqa
     from saqc.core.variable import Variable  # noqa
-    from saqc.core.frame import SaQC  # noqa
+    from saqc.core.frame import SaQCFrame
+else:
+    FlagsFrame = "FlagsFrame"
+    BaseVariable = "BaseVariable"
+    Variable = "Variable"
+    SaQCFrame = "SaQCFrame"
 
 # ############################################################
 # Types that are supported with isinstance
 # ############################################################
-SupportsIndex = Union[pd.DataFrame, pd.Series, "Variable", "FlagsFrame"]
-SupportsColumns = Union[pd.DataFrame, "FlagsFrame"]
+SupportsIndex = Union[pd.DataFrame, pd.Series, Variable, FlagsFrame]
+SupportsColumns = Union[pd.DataFrame, FlagsFrame]
 
 Numeric = Union[int, float]  # we do not accept complex (yet?)
 FlagLike = Numeric
@@ -62,13 +67,13 @@ MaskerT = Callable[[NDArray], NDArray]
 # used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a
 # MaskedVariable is passed into a function, a MaskedVariable is always
 # returned and if a Variable is passed in, a Variable is always returned.
-VariableT = TypeVar("VariableT", bound="BaseVariable")
+VariableT = TypeVar("VariableT", bound=BaseVariable)
 
 # Either Variable or SaQC not the Union of both,
 # that mean tha a function defined like this `foo(a: VarOrQcT) -> VarOrQcT`
 # returns an object of the same type as `a` is.
 # It never takes a Variable and return a SaQC object.
-VarOrQcT = TypeVar("VarOrQcT", "Variable", "SaQC")
+VarOrQcT = TypeVar("VarOrQcT", Variable, SaQCFrame)
 
 # to maintain type information across generic functions and parametrization
 T = TypeVar("T")
