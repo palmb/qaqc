@@ -1,10 +1,15 @@
 #!/usr/bin/env python
 from __future__ import annotations
-from typing import Callable, Any
+
+from typing import Callable, Any, overload
 import pandas as pd
 import textwrap
 import collections.abc as abc
-import sliceable_dict.lib
+import inspect
+from collections import namedtuple
+
+
+FuncInfo = namedtuple("FuncInfo", "name file lineno")
 
 
 def dict_to_keywords(
@@ -63,6 +68,8 @@ def repr_extended(
         rpr = f"Series[{len(obj)} rows]"
     elif isinstance(obj, pd.DataFrame):
         rpr = f"DataFrame[{obj.shape[0]} rows x {obj.shape} columns]"
+    elif isinstance(obj, FuncInfo):
+        rpr = f"FuncInfo(name={obj.name}, ...)"
     else:
         rpr = repr(obj)
     if maxlen is not None:
@@ -118,8 +125,63 @@ def forall(obj, cond, args=()):
     return next(filter(lambda e: not cond(e, *args), obj), True) is True
 
 
+def get_func_location(obj: Callable, errors: str = "raise") -> FuncInfo | None:
+    """
+    Return funcdef_name, funcdef_file, lineno
+    errors: 'raise', 'ignore'
+    """
+    from inspect import isclass, isfunction, ismethod, isbuiltin
+
+    def get_loc():
+        if not callable(obj):
+            raise TypeError("obj must be a callable")
+
+        if isbuiltin(obj):
+            name = obj.__qualname__
+            file = "build-in function"
+            line = ""
+        elif isclass(obj):
+            raise NotImplementedError(
+                "Only callable instances, methods and "
+                "functions are supported, not classes"
+            )
+        else:
+            if ismethod(obj):
+                name = obj.__qualname__
+                code = obj.__func__.__code__
+            elif isfunction(obj):  # include lambdas
+                name = obj.__qualname__
+                code = obj.__code__
+            else:  # callable class instance
+                name = obj.__qualname__
+                code = obj.__call__.__func__.__code__
+            file = code.co_filename
+            line = code.co_firstlineno
+        return FuncInfo(name, file, line)
+
+    try:
+        return get_loc()
+    except Exception:
+        if errors == "raise":
+            raise
+    return None
+
+
+def get_caller(stacklevel=1):
+    """get parent function"""
+    stack = inspect.stack(0)
+    if len(stack) > stacklevel:
+        frame = stack[stacklevel]
+        name, file, line = frame.function, frame.filename, frame.lineno
+    else:
+        name, file, line = "Unknown", "Unknown", 0
+    return FuncInfo(name, file, line)
+
+
 if __name__ == "__main__":
     d = dict(a=dict(a=0, b=99, c=dict(a=dict(d=dict))), b=999999)
+
+    a = get_func_location(lambda x: x)
 
     # r = dict_to_keywords(d)
     # print(r)

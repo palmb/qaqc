@@ -10,10 +10,7 @@ import saqc.core.utils as utils
 from typing import Any
 from saqc.core.ops import OpsMixin
 
-__all__ = [
-    "Meta",
-    "FlagsFrame"
-]
+__all__ = ["Meta", "FlagsFrame"]
 
 
 class Meta:
@@ -23,7 +20,7 @@ class Meta:
     def __init__(self):
         self._raw = pd.Series(dtype=object)
 
-    def copy(self, deep:bool=True) -> Meta:
+    def copy(self, deep: bool = True) -> Meta:
         new = self.__class__()
         if deep:
             # raw is a pd.Series with object dtype,
@@ -40,7 +37,7 @@ class Meta:
 
     def explode(self) -> pd.DataFrame:
         meta = self.to_pandas()
-        meta[meta.isna()] = ({}, )
+        meta[meta.isna()] = ({},)
         return pd.DataFrame(meta.to_list())
 
     @property
@@ -73,8 +70,8 @@ class Meta:
             return "Meta([])"
         return repr(self._raw)
 
-    def _render_short(self):
-        return f"Meta: {utils.repr_extended(dict(self._raw), kwdicts=True)}"
+    def _render_short(self, wrap=None):
+        return f"Meta: {utils.repr_extended(dict(self._raw), kwdicts=True, wrap=wrap)}"
 
 
 class FlagsFrame(OpsMixin):
@@ -98,23 +95,17 @@ class FlagsFrame(OpsMixin):
                 raise TypeError(
                     "If no 'index' is given, 'initial' must " "have a pandas.Index."
                 )
-
         # special case:  FlagsFrame(flags_frame)
         elif isinstance(index, type(self)):
             initial = index.current()
             index = index.index
-        else:
-            try:
-                index = pd.Index(index)
-            except TypeError:
-                raise TypeError(f"Cannot create index for from {type(index)}")
-
-        index.name = None
+        elif not isinstance(index, pd.Index):
+            index = pd.Index(index)
 
         if isinstance(initial, type(self)):
             initial = initial.current()
 
-        self._raw = pd.DataFrame(index=index, dtype=float)
+        self._raw = pd.DataFrame(index=index.copy(), dtype=float)
         self._meta = Meta()
 
         if initial is not None:

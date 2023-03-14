@@ -54,14 +54,13 @@ class _Data:
         self._raw = np.ma.MaskedArray(
             data=series.array, mask=mask, dtype=float, fill_value=fill_value, copy=True
         )
-        series.index.name = None
-        self._index = series.index
+        self._index = series.index.copy()
 
     def copy(self, deep=False) -> _Data:
         cls = self.__class__
         if deep:
             return cls(
-                raw=self._raw,
+                raw=self._raw.data,
                 index=self.index,
                 mask=self._raw.mask,
                 fill_value=self.fill_value,
@@ -130,8 +129,8 @@ class BaseVariable:
     def __init__(
         self,
         data,
-        index: pd.Index | None = None,
         flags: FlagsFrame | pd.Series | None = None,
+        index: pd.Index | None = None,
     ):
         if isinstance(data, type(self)):
             if flags is None:
@@ -139,6 +138,12 @@ class BaseVariable:
             if index is None:
                 index = data.index
             data = data._data._raw
+
+        if isinstance(index, pd.Series):
+            raise TypeError(
+                "Using a pd.Series as index is not allowed, "
+                "use pd.Series.values instead"
+            )
 
         data = _Data(data, index)
 
@@ -183,18 +188,18 @@ class BaseVariable:
 
     @property
     def orig(self) -> pd.Series:
-        """ Returns a copy of the underlying data (no masking)"""
+        """Returns a copy of the underlying data (no masking)"""
         return self._data.orig_series
 
     @property
     def data(self) -> pd.Series:
-        """ Returns a copy of the underlying data (masked by flags)"""
+        """Returns a copy of the underlying data (masked by flags)"""
         self._update_mask()
         return self._data.masked_series
 
     @property
     def flags(self) -> pd.Series:
-        """ Returns a series of currently set flags"""
+        """Returns a series of currently set flags"""
         return self._history.current()
 
     @property
@@ -260,7 +265,7 @@ class BaseVariable:
         raise NotImplementedError("use 'set_flags()' instead")
 
     @overload
-    def set_flags(self, value: FlagLike, cond: CondT, **meta) -> BaseVariable:
+    def set_flags(self, value: FlagLike, cond: CondT = None, **meta) -> BaseVariable:
         ...
 
     @overload
@@ -297,7 +302,6 @@ class BaseVariable:
         mask = self._create_mask()
         self._data._raw.soften_mask()
         self._data._raw.mask = mask
-        self._data._raw.harden_mask()
 
     def _create_mask(self) -> np.ndarray:
         masker = self.masker or self.global_masker
