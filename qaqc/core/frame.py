@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
-import abc
+from abc import abstractmethod
 import functools
 import warnings
 from typing import Callable, Union, TypeVar, Iterator
@@ -11,25 +11,27 @@ import numpy as np
 from sliceable_dict import TypedSliceDict
 
 from qaqc.constants import UNFLAGGED
-from qaqc.typing import T, Columns, Axes, QaqcFrameT, FlagLike
+from qaqc.typing import T, Columns, Axes, QaqcFrameT, FlagLike, NDArray
 from qaqc.core.variable import Variable
 from qaqc.errors import ImplementationError
+from qaqc.core.utils import maybe_construct_Index
 
 
-class IdxMixin(abc.ABC):
-    def _get_indexes(self: QaqcFrameT) -> list[pd.Index]:
-        return list(map(lambda v: v.index, self._vars.values()))
+class IdxMixin:
+    @abstractmethod
+    def _get_indexes(self) -> list[pd.Index]:
+        ...
 
-    def union_index(self: QaqcFrameT) -> pd.Index:
+    def union_index(self) -> pd.Index:
         indexes = self._get_indexes()
         if indexes:
             return functools.reduce(pd.Index.union, indexes)
         return pd.Index([])
 
-    def shared_index(self: QaqcFrameT) -> pd.Index:
+    def shared_index(self) -> pd.Index:
         indexes = self._get_indexes()
         if indexes:
-            return functools.reduce(pd.Index.intersection, indexes)  # type: ignore
+            return functools.reduce(pd.Index.intersection, indexes)
         return pd.Index([])
 
 
@@ -56,7 +58,7 @@ class _Vars(TypedSliceDict):
         if deep:
             data = {k: v.copy(deep=True) for k, v in self.items()}
         else:
-            data = zip(self.keys(), self.values())
+            data = zip(self.keys(), self.values())  # type: ignore
         return cls(data)
 
 
@@ -95,6 +97,7 @@ class QaqcFrame(IdxMixin):
         self,
         data: None
         | pd.DataFrame
+        | NDArray
         | QaqcFrame
         | dict[str, VarLike]
         | list[VarLike]
@@ -121,65 +124,64 @@ class QaqcFrame(IdxMixin):
 
         copy :
         """
-        if columns is not None:
-            columns = pd.Index(columns)
-            if isinstance(columns, pd.MultiIndex):
-                raise TypeError("columns must not be a multi level index")
-            if not columns.is_unique:
-                raise ValueError("columns must have unique values")
+        raw: dict | _Vars
+
+        columns = maybe_construct_Index(columns, name="Columns", optional=True)
 
         if data is None:
-            data = {}
+            raw = {}
             copy = False
         elif isinstance(data, QaqcFrame):
-            data = data._vars.copy(deep=copy)
+            raw = data._vars.copy(deep=copy)
             copy = False
         elif isinstance(data, pd.DataFrame):
-            data = dict(data.copy(deep=copy))
+            raw = dict(data.copy(deep=copy))
             copy = False
-        elif isinstance(data, (Variable, pd.Series)):
-            data = [data.copy(deep=copy)]
-            copy = False
-
-        if isinstance(data, list):
+        elif isinstance(data, (Variable, pd.Series, list)):
+            if not isinstance(data, list):
+                data = [data]
             if columns is None:
-                columns = "var" + pd.RangeIndex(len(data))
+                columns = "var" + pd.RangeIndex(len(data))  # type: ignore
             elif len(data) != len(columns):
                 raise ValueError(
                     f"data have {len(data)} values, "
                     f"but columns imply {len(columns)}"
                 )
-            data = dict(zip(columns, data))
+            raw = dict(zip(columns, data))
             # no subset of columns required
             columns = None
+        elif isinstance(data, dict):
+            raw = data
 
-        if not isinstance(data, dict):
+        # we pass any other kind of data to DataFrame
+        # to see if pandas can handle it
+        else:
             name = self.__class__.__name__
             try:
-                tmp = dict(pd.DataFrame(data, index=index, columns=columns, copy=False))
+                raw = dict(pd.DataFrame(data, index=index, columns=columns, copy=False))
             except Exception as e:
                 e2 = _find_faulty_DataFrame_param(data, index, columns)
                 if not e2:
                     raise TypeError(f"Cannot construct {name} from given inputs")
                 raise type(e2)(str(e2)) from e
-            data = tmp
 
-        data = _Vars(data)
+        _vars = _Vars(raw)
 
         # select a subset with columns
         if columns is not None:
-            diff = columns.difference(data.keys())  # type: ignore
+            keys = pd.Index(_vars.keys())
+            diff = columns.difference(keys)
             if not diff.empty:
                 warnings.warn(
                     "Not all the values of given columns are "
                     "present in data while selecting the subset"
                 )
-            common = columns.intersection(data.keys())  # type: ignore
-            data = data[common]
+            common = columns.intersection(keys)
+            _vars = _vars[common]
 
         if copy:
-            data = data.copy(deep=True)
-        self._vars = data
+            _vars = _vars.copy(deep=True)
+        self._vars = _vars
 
     def copy(self, deep: bool = True) -> QaqcFrame:
         cls = self.__class__
@@ -211,7 +213,11 @@ class QaqcFrame(IdxMixin):
         return self.__repr__() + "\n"
 
     def __repr__(self):
-        return repr(self.to_pandas(how="outer", flat=False))
+        df = self.to_pandas(how="outer", flat=False)
+        columns = pd.MultiIndex.from_product([self.columns, ["data", "flags", "|"]])
+        df = df.reindex(columns=columns)
+        df.loc[:, (slice(None), "|")] = "|"
+        return repr(df)
 
     def to_pandas(self, how="outer", flat=False) -> pd.DataFrame:
         if how == "outer":
@@ -236,9 +242,13 @@ class QaqcFrame(IdxMixin):
                 df[(k, "flags")] = var.flags
         return df
 
+    def _get_indexes(self) -> list[pd.Index]:
+        # needed for IdxMixin
+        return list(map(lambda v: v.index, self._vars.values()))
+
     def _for_each(self, func: Callable[..., Variable], *args, **kwargs) -> QaqcFrame:
         # avoid some common mistake
-        for kw in ['inplace', 'subset']:
+        for kw in ["inplace", "subset"]:
             if kw in kwargs:
                 raise ImplementationError(f"Do not pass {kw} to Variable methods")
 
@@ -252,15 +262,12 @@ class QaqcFrame(IdxMixin):
 
     def flag_limits(
         self, lower=-np.inf, upper=np.inf, flag: FlagLike = 9, inplace=False
-    ) -> QaqcFrame:
+    ) -> QaqcFrame | None:
         result = self if inplace else self.copy()
         result = result._for_each(
             Variable.flag_limits, lower=lower, upper=upper, flag=flag
         )
         return None if inplace else result
-
-    # def dododo(self, arg0, arg1, kw0=None, kw1=None):
-    #     return _for_each(self, Variable.flagna, arg0, arg1, kw0=kw0, kw1=kw1)
 
 
 if __name__ == "__main__":
@@ -269,7 +276,7 @@ if __name__ == "__main__":
 
     qc = QaqcFrame(np.arange(16).reshape(4, 4), index=dtindex(4), columns=list("abcd"))
     qc = QaqcFrame(qc, columns=list("abx"))
-    qc["x"] = pd.Series(range(6), dtindex(6))
+    qc["x"] = pd.Series(range(2, 8), dtindex(6))
     qc2 = qc.flag_limits(4, 10, inplace=False)
     print(qc2)
     print(qc)

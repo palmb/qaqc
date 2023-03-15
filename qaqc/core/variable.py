@@ -51,30 +51,36 @@ class _Data:
 
     def __init__(
         self,
-        raw: pd.Series | np.ndarray,
+        raw,
         index: pd.Index | None = None,
         mask: bool | MaskT = False,
         dtype=float,
         fill_value: float = np.nan,
     ):
+        copy = True
         if isinstance(raw, pd.Series):
             if index is None:
                 index = raw.index
-            raw = raw.array
+            raw = raw.to_numpy(copy=True)
+            copy = False
         elif index is None:
             raise TypeError("If data is not a pandas.Series, an index must be given")
 
-        index = maybe_construct_Index(index, errors='raise')
+        index = maybe_construct_Index(index, name="Index", errors="raise")
 
         if dtype is not float:
             raise NotImplementedError("Only float dtype is supported.")
 
         if isinstance(mask, pd.Series):
-            mask = mask.array
+            mask = mask.to_numpy(copy=True)
 
-        ser = pd.Series(raw, index=index, dtype=float)
+        ser = pd.Series(raw, index=index, dtype=float, copy=copy)
         self._raw = np.ma.MaskedArray(
-            data=ser.array, mask=mask, dtype=float, fill_value=fill_value, copy=True
+            data=ser.to_numpy(copy=False),
+            mask=mask,
+            dtype=float,
+            fill_value=fill_value,
+            copy=False,
         )
         self._index = ser.index.copy()
 
@@ -400,7 +406,7 @@ class BaseVariable:
         if not self.index.empty:
             if "f0" in df:
                 n = df.columns.get_loc("f0")
-                df.insert(n, "|", ["|"] * len(df.index))  # type: ignore
+                df.insert(n, "|", ["|"] * len(df.index))
         return repr(df).replace("DataFrame", self.__class__.__name__)
 
     @final
@@ -428,10 +434,8 @@ class BaseVariable:
         if not self.index.empty:
             if "f0" in df:
                 n = df.columns.get_loc("f0")
-                df.insert(n, "|", ["|"] * len(df.index))  # type: ignore
-        s = df.to_string(*args, **kwargs).replace(  # type: ignore
-            "DataFrame", self.__class__.__name__
-        )
+                df.insert(n, "|", ["|"] * len(df.index))
+        s = df.to_string(*args, **kwargs).replace("DataFrame", self.__class__.__name__)
         if show_meta:
             s += "\n" + str(self.meta._render_short())
         return s

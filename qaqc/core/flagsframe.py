@@ -104,7 +104,7 @@ class FlagsFrame(OpsMixin):
             initial = index.current()
             index = index.index
 
-        index = utils.maybe_construct_Index(index, errors='raise')
+        index = utils.maybe_construct_Index(index, name='Index', errors='raise')
 
         if isinstance(initial, type(self)):
             initial = initial.current()
@@ -229,7 +229,7 @@ class FlagsFrame(OpsMixin):
     def to_string(self, *args, show_meta=True, **kwargs) -> str:
         meta = f"\n{repr(self._meta)}" if show_meta else ""
         return (
-            self.to_pandas()  # type: ignore
+            self.to_pandas()
             .to_string(*args, **kwargs)
             .replace("DataFrame", self.__class__.__name__)
         ) + meta

@@ -12,18 +12,26 @@ from collections import namedtuple
 FuncInfo = namedtuple("FuncInfo", "name file lineno")
 
 
-def maybe_construct_Index(obj, errors='raise', optional=False) -> pd.Index | None:
-    """ make pd.Index from obj or return obj if already an Index"""
-    if isinstance(obj, pd.Index):
+def maybe_construct_Index(
+    obj: Any, name: str, errors="raise", optional=False, unique=True, multi=False
+) -> pd.Index | None:
+    """make pd.Index from obj or return obj if already an Index"""
+    if optional and obj is None:
         return obj
-    if obj is None and optional:
-        return obj
-    try:
-        return pd.Index(obj)
-    except (ValueError, TypeError) as e:
-        if errors == 'raise':
-            raise
-        return None
+
+    if not isinstance(obj, pd.Index):
+        try:
+            obj = pd.Index(obj)
+        except (ValueError, TypeError):
+            if errors == "raise":
+                raise
+            return None
+
+    if not multi and isinstance(obj, pd.MultiIndex):
+        raise TypeError(f"{name} must not be a multi level index")
+    if unique and not obj.is_unique:
+        raise ValueError(f"{name} must have unique values")
+    return obj
 
 
 def dict_to_keywords(
