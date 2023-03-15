@@ -12,6 +12,39 @@ from collections import namedtuple
 FuncInfo = namedtuple("FuncInfo", "name file lineno")
 
 
+def try_construct_Index(obj, reraise=True, err_msg=None) -> pd.Index:
+    """ make pd.Index from obj or raise less informative exception"""
+    if isinstance(obj, pd.Index):
+        return obj
+    if err_msg is None:
+        err_msg = "could not construct a valid Index"
+    try:
+        return pd.Index(obj)
+    except Exception as e:
+        e2 = type(e)(err_msg)
+        if reraise:
+            raise e2 from e
+        else:
+            raise e2 from None
+
+
+def cast_Series(obj, index=None, reraise=True, err_msg=None, **kwargs) -> pd.Series:
+    if err_msg is None:
+        err_msg = "Could not construct a valid Series"
+    if isinstance(obj, pd.Series):
+        # needed, because otherwise errors on reindexing
+        # and type casting won't come up
+        obj = obj.array
+    try:
+        return pd.Series(obj, index=index, **kwargs)
+    except Exception as e:
+        e2 = type(e)(err_msg)
+        if reraise:
+            raise e2 from e
+        else:
+            raise e2 from None
+
+
 def dict_to_keywords(
     dict_: dict, deep=False, brace=True, extended=True, **kwargs
 ) -> str:

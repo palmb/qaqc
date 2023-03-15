@@ -23,8 +23,7 @@ from typing_extensions import final, Final  # noqa
 
 if TYPE_CHECKING:
     from qaqc.core.flagsframe import FlagsFrame
-    from qaqc.core.base import BaseVariable
-    from qaqc.core.variable import Variable
+    from qaqc.core.variable import Variable, BaseVariable
     from qaqc.core.frame import QaqcFrame
 else:
     FlagsFrame = "FlagsFrame"
@@ -37,6 +36,9 @@ else:
 # ############################################################
 SupportsIndex = Union[pd.DataFrame, pd.Series, Variable, FlagsFrame]
 SupportsColumns = Union[pd.DataFrame, FlagsFrame]
+
+Axes = Union[pd.Index, NDArray, list, range]
+Columns = Union[pd.Index, NDArray, list[str]]
 
 Numeric = Union[int, float]  # we do not accept complex (yet?)
 FlagLike = Numeric
