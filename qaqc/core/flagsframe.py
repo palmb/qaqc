@@ -103,8 +103,8 @@ class FlagsFrame(OpsMixin):
         elif isinstance(index, type(self)):
             initial = index.current()
             index = index.index
-        elif not isinstance(index, pd.Index):
-            index = pd.Index(index)
+
+        index = utils.maybe_construct_Index(index, errors='raise')
 
         if isinstance(initial, type(self)):
             initial = initial.current()

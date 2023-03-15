@@ -1,24 +1,36 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
+import abc
+import functools
 import warnings
-from typing import Callable, Union, TypeVar
+from typing import Callable, Union, TypeVar, Iterator
 
 import pandas as pd
 import numpy as np
 from sliceable_dict import TypedSliceDict
 
 from qaqc.constants import UNFLAGGED
-from qaqc.typing import T, Columns, Axes
+from qaqc.typing import T, Columns, Axes, QaqcFrameT, FlagLike
 from qaqc.core.variable import Variable
+from qaqc.errors import ImplementationError
 
-# Wording
-# data : a single Series holding the actual data
-# history : an instance of FlagsFrame holding all flagging information
-# final-history (fflags): a single Series representing the resulting history for data
-# raw (as attribute in internal classes) : holds the actual data and named
-#       `raw` to avoid confusion, especially `history.raw` is less confusing
-#       than `history.data` .
+
+class IdxMixin(abc.ABC):
+    def _get_indexes(self: QaqcFrameT) -> list[pd.Index]:
+        return list(map(lambda v: v.index, self._vars.values()))
+
+    def union_index(self: QaqcFrameT) -> pd.Index:
+        indexes = self._get_indexes()
+        if indexes:
+            return functools.reduce(pd.Index.union, indexes)
+        return pd.Index([])
+
+    def shared_index(self: QaqcFrameT) -> pd.Index:
+        indexes = self._get_indexes()
+        if indexes:
+            return functools.reduce(pd.Index.intersection, indexes)  # type: ignore
+        return pd.Index([])
 
 
 def _for_each(obj, func, *args, **kwargs):
@@ -72,7 +84,7 @@ def _find_faulty_DataFrame_param(data, index, columns):
     return None
 
 
-class QaqcFrame:
+class QaqcFrame(IdxMixin):
     _vars: _Vars
 
     @property
@@ -158,7 +170,10 @@ class QaqcFrame:
         if columns is not None:
             diff = columns.difference(data.keys())  # type: ignore
             if not diff.empty:
-                warnings.warn("Not all values in columns are present in data")
+                warnings.warn(
+                    "Not all the values of given columns are "
+                    "present in data while selecting the subset"
+                )
             common = columns.intersection(data.keys())  # type: ignore
             data = data[common]
 
@@ -196,24 +211,53 @@ class QaqcFrame:
         return self.__repr__() + "\n"
 
     def __repr__(self):
-        # index = shared
-        columns = pd.MultiIndex.from_product([self.columns, ["data", "flags"]])
-        df = pd.DataFrame(columns=columns)
-        for k, var in self._vars.items():
-            df[(k, "data")] = var.data
-            df[(k, "flags")] = var.flags
-        return repr(df)
+        return repr(self.to_pandas(how="outer", flat=False))
 
-    def to_pandas(self) -> pd.DataFrame:
-        pass
+    def to_pandas(self, how="outer", flat=False) -> pd.DataFrame:
+        if how == "outer":
+            index = self.union_index()
+        elif how == "inner":
+            index = self.shared_index()
+        else:
+            raise ValueError(f"{how=}")
+
+        if flat:
+            columns = None
+        else:
+            columns = pd.MultiIndex.from_product([self.columns, ["data", "flags"]])
+
+        df = pd.DataFrame(index=index, columns=columns)
+        for k, var in self._vars.items():
+            if flat:
+                df[f"{k}-data"] = var.data
+                df[f"{k}-flags"] = var.flags
+            else:
+                df[(k, "data")] = var.data
+                df[(k, "flags")] = var.flags
+        return df
 
     def _for_each(self, func: Callable[..., Variable], *args, **kwargs) -> QaqcFrame:
-        new = QaqcFrame()
+        # avoid some common mistake
+        for kw in ['inplace', 'subset']:
+            if kw in kwargs:
+                raise ImplementationError(f"Do not pass {kw} to Variable methods")
+
         for key, var in self._vars.items():
             var = self[key].copy()
             result = func(var, *args, **kwargs)
-            new[key] = var if result is None else result  # cover inplace case
-        return new
+            # this cover inplace, in case we want to
+            # allow this feature at some point
+            self[key] = var if result is None else result
+        return self
+
+    def flag_limits(
+        self, lower=-np.inf, upper=np.inf, flag: FlagLike = 9, inplace=False
+    ) -> QaqcFrame:
+        result = self if inplace else self.copy()
+        result = result._for_each(
+            Variable.flag_limits, lower=lower, upper=upper, flag=flag
+        )
+        return None if inplace else result
 
     # def dododo(self, arg0, arg1, kw0=None, kw1=None):
     #     return _for_each(self, Variable.flagna, arg0, arg1, kw0=kw0, kw1=kw1)
@@ -223,7 +267,12 @@ if __name__ == "__main__":
     from qaqc import QaqcFrame
     from qaqc._testing import dtindex
 
-    # qc = QaqcFrame(np.arange(16).reshape(4, 4), index=dtindex(4), columns=list("abcd"))
-    qc = QaqcFrame(slice(1), index=dtindex(4), columns=list("abcd"))
+    qc = QaqcFrame(np.arange(16).reshape(4, 4), index=dtindex(4), columns=list("abcd"))
+    qc = QaqcFrame(qc, columns=list("abx"))
+    qc["x"] = pd.Series(range(6), dtindex(6))
+    qc2 = qc.flag_limits(4, 10, inplace=False)
+    print(qc2)
     print(qc)
-    print(qc["a"])
+    qc.flag_limits(4, 10, inplace=True)
+    print(qc)
+    print(qc2)

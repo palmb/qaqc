@@ -67,6 +67,7 @@ MaskerT = Callable[[NDArray], NDArray]
 # MaskedVariable is passed into a function, a MaskedVariable is always
 # returned and if a Variable is passed in, a Variable is always returned.
 VariableT = TypeVar("VariableT", bound=BaseVariable)
+QaqcFrameT = TypeVar("QaqcFrameT", bound=QaqcFrame)
 
 # Either Variable or SaQC not the Union of both,
 # that mean tha a function defined like this `foo(a: VarOrQcT) -> VarOrQcT`

@@ -24,8 +24,7 @@ from qaqc.core.utils import (
     is_iterable,
     is_boolean_indexer,
     get_func_location,
-    try_construct_Index,
-    cast_Series,
+    maybe_construct_Index,
 )
 from qaqc.constants import UNFLAGGED
 from qaqc.core.flagsframe import FlagsFrame, Meta
@@ -61,32 +60,23 @@ class _Data:
         if isinstance(raw, pd.Series):
             if index is None:
                 index = raw.index
-            raw = raw.to_numpy()
+            raw = raw.array
         elif index is None:
             raise TypeError("If data is not a pandas.Series, an index must be given")
 
-        index = try_construct_Index(index, reraise=False, err_msg="invalid index")
+        index = maybe_construct_Index(index, errors='raise')
 
         if dtype is not float:
             raise NotImplementedError("Only float dtype is supported.")
 
         if isinstance(mask, pd.Series):
-            mask = mask.to_numpy()
+            mask = mask.array
 
-        if len(raw) != len(index):
-            raise ValueError(
-                f"data has {len(raw)} values, but index imply {len(index)}"
-            )
-
+        ser = pd.Series(raw, index=index, dtype=float)
         self._raw = np.ma.MaskedArray(
-            data=raw, mask=mask, dtype=float, fill_value=fill_value, copy=True
+            data=ser.array, mask=mask, dtype=float, fill_value=fill_value, copy=True
         )
-        self._index = index.copy()
-
-        try:
-            self.masked_series  # noqa
-        except Exception:
-            raise AssertionError("integrity violated")
+        self._index = ser.index.copy()
 
     def copy(self, deep=False) -> _Data:
         cls = self.__class__
@@ -183,13 +173,10 @@ class BaseVariable:
                 "use pd.Series.values instead"
             )
 
-        if index is not None:
-            index = try_construct_Index(index, reraise=False, err_msg="invalid index")
-
         if index is None and data is None:
             raise ValueError("Either data or index must be given")
 
-        data = cast_Series(data, index=index, dtype=float, err_msg="invalid data")
+        # handles both, data and index casting and errors
         data = _Data(data, index)
 
         # If no history are given we create an empty FlagsFrame,
