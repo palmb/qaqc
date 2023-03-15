@@ -11,7 +11,7 @@ import numpy as np
 from sliceable_dict import TypedSliceDict
 
 from qaqc.constants import UNFLAGGED
-from qaqc.typing import T, Columns, Axes, QaqcFrameT, FlagLike, NDArray
+from qaqc.typing import T, Cols, Idx, QaqcFrameT, FlagLike, NDArray, VarOrSer
 from qaqc.core.variable import Variable
 from qaqc.errors import ImplementationError
 from qaqc.core.utils import maybe_construct_Index
@@ -62,30 +62,6 @@ class _Vars(TypedSliceDict):
         return cls(data)
 
 
-Series = TypeVar("Series", bound=pd.Series)
-VarLike = Union[Variable, pd.Series]
-
-
-def _find_faulty_DataFrame_param(data, index, columns):
-    def fail(**kwargs) -> Exception | None:
-        try:
-            pd.DataFrame(data, **kwargs)
-            return None
-        except Exception as e:
-            return e
-
-    d_fail = fail()
-    c_fail = fail(columns=columns)
-    i_fail = fail(index=index)
-    if d_fail and c_fail and i_fail:
-        return None  # cannot construct obj with given params
-    if i_fail:
-        return type(i_fail)("faulty index")
-    if c_fail:
-        return type(c_fail)("faulty columns")
-    return None
-
-
 class QaqcFrame(IdxMixin):
     _vars: _Vars
 
@@ -95,15 +71,15 @@ class QaqcFrame(IdxMixin):
 
     def __init__(
         self,
-        data: None
-        | pd.DataFrame
-        | NDArray
+        data: pd.DataFrame
         | QaqcFrame
-        | dict[str, VarLike]
-        | list[VarLike]
-        | VarLike = None,
-        columns: Columns | None = None,
-        index: Axes | None = None,
+        | NDArray
+        | dict[str, VarOrSer]
+        | list[VarOrSer]
+        | VarOrSer
+        | None = None,
+        columns: Cols | None = None,
+        index: Idx | None = None,
         copy: bool = True,
     ):
         """
@@ -124,10 +100,9 @@ class QaqcFrame(IdxMixin):
 
         copy :
         """
-        raw: dict | _Vars
-
         columns = maybe_construct_Index(columns, name="Columns", optional=True)
 
+        raw: dict | _Vars
         if data is None:
             raw = {}
             copy = False
@@ -152,17 +127,18 @@ class QaqcFrame(IdxMixin):
             columns = None
         elif isinstance(data, dict):
             raw = data
-
-        # we pass any other kind of data to DataFrame
-        # to see if pandas can handle it
         else:
+            # We pass any other kind of data to DataFrame
+            # to see if pandas can handle it...
             name = self.__class__.__name__
             try:
                 raw = dict(pd.DataFrame(data, index=index, columns=columns, copy=False))
             except Exception as e:
                 e2 = _find_faulty_DataFrame_param(data, index, columns)
                 if not e2:
-                    raise TypeError(f"Cannot construct {name} from given inputs")
+                    raise TypeError(
+                        f"Cannot construct {name} from given inputs"
+                    ) from None
                 raise type(e2)(str(e2)) from e
 
         _vars = _Vars(raw)
@@ -214,6 +190,8 @@ class QaqcFrame(IdxMixin):
 
     def __repr__(self):
         df = self.to_pandas(how="outer", flat=False)
+        if df.empty:
+            return f"Empty {self.__class__.__name__}\nColumns: []"
         columns = pd.MultiIndex.from_product([self.columns, ["data", "flags", "|"]])
         df = df.reindex(columns=columns)
         df.loc[:, (slice(None), "|")] = "|"
@@ -270,10 +248,32 @@ class QaqcFrame(IdxMixin):
         return None if inplace else result
 
 
+def _find_faulty_DataFrame_param(data, index, columns):
+    def fail(**kwargs) -> Exception | None:
+        try:
+            pd.DataFrame(data, **kwargs)
+            return None
+        except (TypeError, ValueError, IndexError) as e:
+            return e
+
+    d_fail = fail()
+    c_fail = fail(columns=columns)
+    i_fail = fail(index=index)
+    if d_fail and c_fail and i_fail:
+        return None  # cannot construct obj with given params
+    if i_fail:
+        return type(i_fail)("faulty index")
+    if c_fail:
+        return type(c_fail)("faulty columns")
+    return None
+
+
 if __name__ == "__main__":
     from qaqc import QaqcFrame
     from qaqc._testing import dtindex
 
+    qc = QaqcFrame(None, index=dtindex(4), columns=list("abcd"))
+    print(qc)
     qc = QaqcFrame(np.arange(16).reshape(4, 4), index=dtindex(4), columns=list("abcd"))
     qc = QaqcFrame(qc, columns=list("abx"))
     qc["x"] = pd.Series(range(2, 8), dtindex(6))

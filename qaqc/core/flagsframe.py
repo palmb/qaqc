@@ -104,7 +104,7 @@ class FlagsFrame(OpsMixin):
             initial = index.current()
             index = index.index
 
-        index = utils.maybe_construct_Index(index, name='Index', errors='raise')
+        index = utils.maybe_construct_Index(index, name="Index", errors="raise")
 
         if isinstance(initial, type(self)):
             initial = initial.current()

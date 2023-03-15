@@ -32,31 +32,28 @@ else:
     QaqcFrame = "QaqcFrame"
 
 # ############################################################
-# Types that are supported with isinstance
+# Types that are supposed to work with isinstance,
+# Nevertheless we don't use them with isinstance !
 # ############################################################
 SupportsIndex = Union[pd.DataFrame, pd.Series, Variable, FlagsFrame]
 SupportsColumns = Union[pd.DataFrame, FlagsFrame]
 
-Axes = Union[pd.Index, NDArray, list, range]
-Columns = Union[pd.Index, NDArray, list[str]]
+Cols = Union[pd.Index, NDArray, list[str]]
+Idx = Union[pd.Index, NDArray, list, range]
 
 Numeric = Union[int, float]  # we do not accept complex (yet?)
 FlagLike = Numeric
 Scalar = Union[Numeric, str, bool]
 PandasLike = Union[pd.Series, pd.DataFrame]
 ListLike = Union[pd.Series, list, NDArray]
+VarOrSer = Union[Variable, pd.Series]
 
 # ############################################################
 # SomeThingT  only for type checker not usable with isinstance
 # ############################################################
 
-# FloatSeries = TypeVar("FloatSeries", bound=pd.Series)
-# FloatArray = TypeVar("FloatArray", bound=np.ndarray)
-# BoolSeries = TypeVar("BoolSeries", bound=pd.Series)
-# BoolArray = TypeVar("BoolArray", bound=np.ndarray)
-
-# unfortunately Sequence is not overwrite subclasshook and so
-# does not work reliable with isinstance
+# unfortunately Sequence does not overwrite subclasshook
+# and so does not reliably work with isinstance
 MaskT = Union[pd.Series, NDArray, Sequence[bool]]
 CondT = Union[MaskT, pd.Index]  # add Callable[..., MaskT] at some point
 
