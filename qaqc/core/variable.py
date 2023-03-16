@@ -41,72 +41,6 @@ __all__ = ["Variable"]
 # todo: Feature: translation
 
 
-class Ref:
-    __slots__ = ("_ref", "name", "meta", "mapping", "last_col")
-
-    _ref: weakref.ReferenceType[VariableT]
-    name: str | None
-    meta: Meta | None
-    mapping: pd.Series | None
-
-    def __init__(self, obj: VariableT, meta, mapping, last_col):
-        self._ref = weakref.ref(obj)
-        self.name = obj.name
-        self.meta = meta
-        self.mapping = mapping
-        self.last_col = last_col
-
-    @property
-    def _ref_alive(self) -> bool:
-        return self._ref() is not None
-
-    @property
-    def _ref_var(self) -> VariableT | None:
-        return self._ref()
-
-    def __eq__(self, other: Any) -> bool:
-        return (
-            isinstance(other, Ref)
-            and self.last_col == other.last_col
-            and self.name == other.name
-            and (
-                self.mapping is None
-                and other.mapping is None
-                or self.mapping is not None
-                and self.mapping.equals(other.mapping)
-            )
-            and (
-                self.meta is None
-                and other.meta is None
-                or self.meta is not None
-                and other.meta is not None
-                and self.meta._raw.equals(other.meta._raw)
-            )
-        )
-
-    def __ne__(self, other: Any) -> bool:
-        return not self.__eq__(other)
-
-    def __repr__(self):
-        meta = "meta"
-        if self.meta is None:
-            meta += ": None"
-        else:
-            meta += f"\n----\n{self.meta._raw}"
-        mapping = "mapping"
-        if self.mapping is None:
-            mapping += ": None"
-        else:
-            mapping += f"\n-------\n{self.mapping}"
-        return (
-            f"Reference\n"
-            f"=========\n"
-            f"name: {self.name}\n"
-            f"{meta}\n"
-            f"{mapping}"
-        )
-
-
 # This class is private because it is completely
 # shadowed by methods and properties in BaseVariable.
 # A user should not access or create _Data, nor
@@ -233,7 +167,7 @@ class BaseVariable:
         data,
         flags: FlagsFrame | pd.Series | None = None,
         index: pd.Index | None = None,
-        ref: VariableT | None = None,
+        ref: BaseVariable | None = None,
     ):
         if isinstance(data, BaseVariable):
             if flags is None:
@@ -572,6 +506,73 @@ class BaseVariable:
     def _create_ref(self):
         mapping, meta, last = self._history._get_meta_mapping()
         return Ref(self, meta, mapping, last)
+
+
+class Ref:
+    __slots__ = ("_ref", "name", "meta", "mapping", "last_col")
+
+    _ref: weakref.ReferenceType[BaseVariable]
+    name: str | None
+    meta: Meta | None
+    mapping: pd.Series | None
+
+    def __init__(self, obj: BaseVariable, meta, mapping, last_col):
+        self._ref = weakref.ref(obj)
+        self.name = obj.name
+        self.meta = meta
+        self.mapping = mapping
+        self.last_col = last_col
+
+    @property
+    def _ref_alive(self) -> bool:
+        return self._ref() is not None
+
+    @property
+    def _ref_var(self) -> BaseVariable | None:
+        return self._ref()
+
+    def __eq__(self, other: Any) -> bool:
+        return (
+                isinstance(other, Ref)
+                and self.last_col == other.last_col
+                and self.name == other.name
+                and (
+                        self.mapping is None
+                        and other.mapping is None
+                        or self.mapping is not None
+                        and other.mapping is not None
+                        and self.mapping.equals(other.mapping)
+                )
+                and (
+                        self.meta is None
+                        and other.meta is None
+                        or self.meta is not None
+                        and other.meta is not None
+                        and self.meta._raw.equals(other.meta._raw)
+                )
+        )
+
+    def __ne__(self, other: Any) -> bool:
+        return not self.__eq__(other)
+
+    def __repr__(self):
+        meta = "meta"
+        if self.meta is None:
+            meta += ": None"
+        else:
+            meta += f"\n----\n{self.meta._raw}"
+        mapping = "mapping"
+        if self.mapping is None:
+            mapping += ": None"
+        else:
+            mapping += f"\n-------\n{self.mapping}"
+        return (
+            f"Reference\n"
+            f"=========\n"
+            f"name: {self.name}\n"
+            f"{meta}\n"
+            f"{mapping}"
+        )
 
 
 # ############################################################################

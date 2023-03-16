@@ -4,7 +4,7 @@ from __future__ import annotations
 from abc import abstractmethod
 import functools
 import warnings
-from typing import Callable, Union, TypeVar, Iterator
+from typing import Callable, Union, TypeVar, Iterator, overload, Any, Iterable, Hashable
 
 import pandas as pd
 import numpy as np
@@ -150,7 +150,7 @@ class QaqcFrame(IdxMixin):
                 warnings.warn(
                     "Not all the values of given columns are "
                     "present in data while selecting the subset",
-                    stacklevel=2
+                    stacklevel=2,
                 )
             common = columns.intersection(keys)
             _vars = _vars[common]
@@ -173,7 +173,15 @@ class QaqcFrame(IdxMixin):
     def columns(self) -> pd.Index:
         return pd.Index(self._vars.keys())
 
-    def __getitem__(self, key) -> Variable | QaqcFrame:
+    @overload
+    def __getitem__(self, key: Hashable) -> Variable:
+        ...
+
+    @overload
+    def __getitem__(self, key: Iterable) -> QaqcFrame:
+        ...
+
+    def __getitem__(self, key):
         raw = self._vars.__getitem__(key)
         if isinstance(raw, _Vars):
             # using a shallow copy would be nice, but we would run into same
@@ -240,12 +248,12 @@ class QaqcFrame(IdxMixin):
 
     def flag_limits(
         self, lower=-np.inf, upper=np.inf, flag: FlagLike = 9, inplace=False
-    ) -> QaqcFrame | None:
+    ) -> QaqcFrame:
         result = self if inplace else self.copy()
         result = result._for_each(
             Variable.flag_limits, lower=lower, upper=upper, flag=flag
         )
-        return None if inplace else result
+        return result
 
 
 def _find_faulty_DataFrame_param(data, index, columns):
@@ -279,7 +287,7 @@ if __name__ == "__main__":
     qc["x"] = pd.Series(range(2, 8), dtindex(6))
     qc2 = qc.flag_limits(4, 10, inplace=False)
     print(qc2)
-    qc['a'] = qc2['b'].dropna()
+    qc["a"] = qc2["b"].dropna()
     print(qc)
-    print(qc['a'])
-    print(qc['a']._ref)
+    print(qc["a"])
+    print(qc["a"]._ref)
