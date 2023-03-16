@@ -290,4 +290,3 @@ if __name__ == "__main__":
     qc["a"] = qc2["b"].dropna()
     print(qc)
     print(qc["a"])
-    print(qc["a"]._ref)

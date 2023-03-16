@@ -155,12 +155,49 @@ class BaseVariable:
     _name: str | None
     _data: _Data
     _history: FlagsFrame
-    _ref: Ref | None
     masker: MaskerT | None
 
     @property
     def _constructor(self: VariableT) -> type[VariableT]:
         return type(self)
+
+    def derive(
+        self: VariableT, data, flags, other: VariableT | None, **meta
+    ) -> VariableT:
+        """
+        A: derive from self (other=None), init from data/flags, index must not match
+        B: derive and init from other, index *must* match
+        """
+        cls = type(self)
+
+        if other is None:
+            ref = self
+            init = flags
+            compressed = ref._history.compress()
+            append = None
+        else:
+            ref = other
+            compressed = ref._history.compress()
+            init = compressed.current()
+            append = flags
+
+        if data is None:
+            data = ref.orig
+
+        f0_meta = dict(derived=compressed.compress_further())
+        # ensure the given meta is present,
+        # even if not extra flags are appended
+        if append is None:
+            f0_meta = {**meta, **f0_meta}
+            meta = {}  # consumed
+
+        derived = cls(data, init)
+        derived._history._meta["f0"] = f0_meta  # override or create
+        derived._name = ref._name
+        derived.masker = ref.masker
+        if append is not None:
+            derived.set_flags(append, None, **meta)
+        return derived
 
     def __init__(
         self,
@@ -174,8 +211,8 @@ class BaseVariable:
                 flags = data._history
             if index is None:
                 index = data.index
-            if ref is None:
-                ref = data
+            # if ref is None:
+            #     ref = data
             data = data._data._raw
 
         if isinstance(index, pd.Series):
@@ -198,7 +235,7 @@ class BaseVariable:
 
         self._data = data
         self._history = flags
-        self._ref = None if ref is None else ref._create_ref()
+        # self._ref = None if ref is None else ref._create_ref()
         self._name = None
         self.masker = None
         self._optimize()
@@ -210,7 +247,7 @@ class BaseVariable:
         c._data = self._data.copy(deep)
         c._history = self._history.copy(deep)
         c._name = self._name
-        c._ref = self._ref
+        # c._ref = self._ref
         c.masker = self.masker
         c._optimize()
         return c
@@ -251,7 +288,7 @@ class BaseVariable:
     @property
     def flags(self) -> pd.Series:
         """Returns a series of currently set flags"""
-        return self._history.current()
+        return self._history.current(raw=False)
 
     @property
     def meta(self) -> Meta:
@@ -496,19 +533,15 @@ class BaseVariable:
 
     def to_pandas(self) -> pd.DataFrame:
         df = self._history.to_pandas()
-        df.insert(0, "flags", self._history.current().array)  # type: ignore
+        df.insert(0, "flags", self._history.current(raw=False).array)  # type: ignore
         # to prevent calling masker multiple times
         # we use private methods and attributes.
         df.insert(0, "mask", self._get_mask())
         df.insert(0, "data", self._data._raw.filled())
         return df
 
-    def _create_ref(self):
-        mapping, meta, last = self._history._get_meta_mapping()
-        return Ref(self, meta, mapping, last)
 
-
-class Ref:
+class ___REF__UNUSED__:
     __slots__ = ("_ref", "name", "meta", "mapping", "last_col")
 
     _ref: weakref.ReferenceType[BaseVariable]
@@ -533,23 +566,23 @@ class Ref:
 
     def __eq__(self, other: Any) -> bool:
         return (
-                isinstance(other, Ref)
-                and self.last_col == other.last_col
-                and self.name == other.name
-                and (
-                        self.mapping is None
-                        and other.mapping is None
-                        or self.mapping is not None
-                        and other.mapping is not None
-                        and self.mapping.equals(other.mapping)
-                )
-                and (
-                        self.meta is None
-                        and other.meta is None
-                        or self.meta is not None
-                        and other.meta is not None
-                        and self.meta._raw.equals(other.meta._raw)
-                )
+            isinstance(other, type(self))
+            and self.last_col == other.last_col
+            and self.name == other.name
+            and (
+                self.mapping is None
+                and other.mapping is None
+                or self.mapping is not None
+                and other.mapping is not None
+                and self.mapping.equals(other.mapping)
+            )
+            and (
+                self.meta is None
+                and other.meta is None
+                or self.meta is not None
+                and other.meta is not None
+                and self.meta._raw.equals(other.meta._raw)
+            )
         )
 
     def __ne__(self, other: Any) -> bool:
@@ -662,13 +695,13 @@ class Variable(BaseVariable):  # noqa
     def dropna(self):
         data = self.orig.dropna()
         flags = self.flags.reindex(data.index)
-        return self._constructor(data, flags, ref=self)
+        return self.derive(data, flags, None, func=this())
 
     def clip(self, lower, upper, flag: FlagLike = -88) -> Variable:
         # todo: meta
         flags = self.flag_limits(lower, upper, flag=flag).flags
         data = self.data.clip(lower, upper)
-        return self._constructor(data, flags, ref=self)
+        return self.derive(data, flags, self, func=this())
 
     def interpolate(self, flag: FlagLike | None = None) -> Variable:
         # todo: meta
@@ -677,13 +710,13 @@ class Variable(BaseVariable):  # noqa
         else:
             flags = self.flags
         data = self.data.interpolate()
-        return self._constructor(data, flags, ref=self)
+        return self.derive(data, flags, self, func=this())
 
     def reindex(self, index=None, method=None) -> Variable:
         # todo: meta
         index = construct_index(index, "index", optional=False)
         data = self.data.reindex(index, method=method)
-        return self._constructor(data, ref=self)
+        return self.derive(data, None, self, func=this())
 
 
 if __name__ == "__main__":
@@ -696,5 +729,3 @@ if __name__ == "__main__":
     v2 = v.dropna()
     v3 = v.reindex(v2.index)
     print(v, v2, v3)
-    print(v._create_ref())
-    print(v._ref)

@@ -22,7 +22,7 @@ from qaqc.core.utils import FuncInfo  # noqa
 from typing_extensions import final, Final  # noqa
 
 if TYPE_CHECKING:
-    from qaqc.core.flagsframe import FlagsFrame
+    from qaqc.core.flagsframe import FlagsFrame, BaseFlagsFrame
     from qaqc.core.variable import Variable, BaseVariable
     from qaqc.core.frame import QaqcFrame
 else:
@@ -30,6 +30,16 @@ else:
     BaseVariable = "BaseVariable"
     Variable = "Variable"
     QaqcFrame = "QaqcFrame"
+    BaseFlagsFrame = "BaseFlagsFrame"
+
+# These SomeT are stricter and ensures that the same subclass of Some always is
+# used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a
+# MaskedVariable is passed into a function, a MaskedVariable is always
+# returned and if a Variable is passed in, a Variable is always returned.
+VariableT = TypeVar("VariableT", bound=BaseVariable)
+QaqcFrameT = TypeVar("QaqcFrameT", bound=QaqcFrame)
+FlagsFrameT = TypeVar("FlagsFrameT", bound=BaseFlagsFrame)
+
 
 # ############################################################
 # Types that are supposed to work with isinstance,
@@ -52,19 +62,14 @@ VarOrSer = Union[Variable, pd.Series]
 # SomeThingT  only for type checker not usable with isinstance
 # ############################################################
 
+SerOrDf = TypeVar("SerOrDf", pd.Series, pd.DataFrame)
+
 # unfortunately Sequence does not overwrite subclasshook
 # and so does not reliably work with isinstance
 MaskT = Union[pd.Series, NDArray, Sequence[bool]]
 CondT = Union[MaskT, pd.Index]  # add Callable[..., MaskT] at some point
 
 MaskerT = Callable[[NDArray], NDArray]
-
-# VariableT is stricter and ensures that the same subclass of Variable always is
-# used. E.g. `def func(a: VariableT) -> variableT: ...` means that if a
-# MaskedVariable is passed into a function, a MaskedVariable is always
-# returned and if a Variable is passed in, a Variable is always returned.
-VariableT = TypeVar("VariableT", bound=BaseVariable)
-QaqcFrameT = TypeVar("QaqcFrameT", bound=QaqcFrame)
 
 # Either Variable or SaQC not the Union of both,
 # that mean tha a function defined like this `foo(a: VarOrQcT) -> VarOrQcT`
