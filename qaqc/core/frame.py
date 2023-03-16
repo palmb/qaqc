@@ -10,11 +10,10 @@ import pandas as pd
 import numpy as np
 from sliceable_dict import TypedSliceDict
 
-from qaqc.constants import UNFLAGGED
 from qaqc.typing import T, Cols, Idx, QaqcFrameT, FlagLike, NDArray, VarOrSer
 from qaqc.core.variable import Variable
 from qaqc.errors import ImplementationError
-from qaqc.core.utils import maybe_construct_Index
+from qaqc.core.utils import construct_index
 
 
 class IdxMixin:
@@ -51,6 +50,8 @@ class _Vars(TypedSliceDict):
     def _cast(self, key: str, value: pd.Series | Variable):
         if isinstance(value, pd.Series):
             value = Variable(value)
+        if isinstance(value, Variable) and value._name is None:
+            value._name = key
         return key, value
 
     def copy(self: _Vars, deep: bool = True) -> _Vars:
@@ -100,18 +101,16 @@ class QaqcFrame(IdxMixin):
 
         copy :
         """
-        columns = maybe_construct_Index(columns, name="Columns", optional=True)
+        columns = construct_index(columns, name="Columns", optional=True)
 
         raw: dict | _Vars
         if data is None:
             raw = {}
             copy = False
         elif isinstance(data, QaqcFrame):
-            raw = data._vars.copy(deep=copy)
-            copy = False
+            raw = data._vars
         elif isinstance(data, pd.DataFrame):
-            raw = dict(data.copy(deep=copy))
-            copy = False
+            raw = dict(data)
         elif isinstance(data, (Variable, pd.Series, list)):
             if not isinstance(data, list):
                 data = [data]
@@ -150,7 +149,8 @@ class QaqcFrame(IdxMixin):
             if not diff.empty:
                 warnings.warn(
                     "Not all the values of given columns are "
-                    "present in data while selecting the subset"
+                    "present in data while selecting the subset",
+                    stacklevel=2
                 )
             common = columns.intersection(keys)
             _vars = _vars[common]
@@ -160,7 +160,7 @@ class QaqcFrame(IdxMixin):
         self._vars = _vars
 
     def copy(self, deep: bool = True) -> QaqcFrame:
-        cls = self.__class__
+        cls = self._constructor
         if deep:
             return cls(self._vars, copy=True)
         c = cls.__new__(cls)
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     qc["x"] = pd.Series(range(2, 8), dtindex(6))
     qc2 = qc.flag_limits(4, 10, inplace=False)
     print(qc2)
+    qc['a'] = qc2['b'].dropna()
     print(qc)
-    qc.flag_limits(4, 10, inplace=True)
-    print(qc)
-    print(qc2)
+    print(qc['a'])
+    print(qc['a']._ref)

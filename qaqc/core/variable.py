@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 
+import weakref
 from abc import abstractmethod
 from typing import Any, overload, TYPE_CHECKING, NoReturn, cast, Callable, Union, Any
 
@@ -24,9 +25,9 @@ from qaqc.core.utils import (
     is_iterable,
     is_boolean_indexer,
     get_func_location,
-    maybe_construct_Index,
+    construct_index,
 )
-from qaqc.constants import UNFLAGGED
+from qaqc.constants import SET_UNFLAGGED
 from qaqc.core.flagsframe import FlagsFrame, Meta
 from qaqc.errors import (
     MaskerError,
@@ -38,6 +39,72 @@ __all__ = ["Variable"]
 
 # todo: Feature: #tags
 # todo: Feature: translation
+
+
+class Ref:
+    __slots__ = ("_ref", "name", "meta", "mapping", "last_col")
+
+    _ref: weakref.ReferenceType[VariableT]
+    name: str | None
+    meta: Meta | None
+    mapping: pd.Series | None
+
+    def __init__(self, obj: VariableT, meta, mapping, last_col):
+        self._ref = weakref.ref(obj)
+        self.name = obj.name
+        self.meta = meta
+        self.mapping = mapping
+        self.last_col = last_col
+
+    @property
+    def _ref_alive(self) -> bool:
+        return self._ref() is not None
+
+    @property
+    def _ref_var(self) -> VariableT | None:
+        return self._ref()
+
+    def __eq__(self, other: Any) -> bool:
+        return (
+            isinstance(other, Ref)
+            and self.last_col == other.last_col
+            and self.name == other.name
+            and (
+                self.mapping is None
+                and other.mapping is None
+                or self.mapping is not None
+                and self.mapping.equals(other.mapping)
+            )
+            and (
+                self.meta is None
+                and other.meta is None
+                or self.meta is not None
+                and other.meta is not None
+                and self.meta._raw.equals(other.meta._raw)
+            )
+        )
+
+    def __ne__(self, other: Any) -> bool:
+        return not self.__eq__(other)
+
+    def __repr__(self):
+        meta = "meta"
+        if self.meta is None:
+            meta += ": None"
+        else:
+            meta += f"\n----\n{self.meta._raw}"
+        mapping = "mapping"
+        if self.mapping is None:
+            mapping += ": None"
+        else:
+            mapping += f"\n-------\n{self.mapping}"
+        return (
+            f"Reference\n"
+            f"=========\n"
+            f"name: {self.name}\n"
+            f"{meta}\n"
+            f"{mapping}"
+        )
 
 
 # This class is private because it is completely
@@ -66,7 +133,7 @@ class _Data:
         elif index is None:
             raise TypeError("If data is not a pandas.Series, an index must be given")
 
-        index = maybe_construct_Index(index, name="Index", errors="raise")
+        index = construct_index(index, name="Index", errors="raise")
 
         if dtype is not float:
             raise NotImplementedError("Only float dtype is supported.")
@@ -151,26 +218,30 @@ class BaseVariable:
     global_masker: MaskerT | None = None
 
     # type hints
+    _name: str | None
     _data: _Data
     _history: FlagsFrame
+    _ref: Ref | None
     masker: MaskerT | None
 
     @property
-    @abstractmethod
     def _constructor(self: VariableT) -> type[VariableT]:
-        ...
+        return type(self)
 
     def __init__(
         self,
         data,
         flags: FlagsFrame | pd.Series | None = None,
         index: pd.Index | None = None,
+        ref: VariableT | None = None,
     ):
-        if isinstance(data, type(self)):
+        if isinstance(data, BaseVariable):
             if flags is None:
                 flags = data._history
             if index is None:
                 index = data.index
+            if ref is None:
+                ref = data
             data = data._data._raw
 
         if isinstance(index, pd.Series):
@@ -193,15 +264,19 @@ class BaseVariable:
 
         self._data = data
         self._history = flags
+        self._ref = None if ref is None else ref._create_ref()
+        self._name = None
         self.masker = None
         self._optimize()
 
     def copy(self: VariableT, deep: bool = True) -> VariableT:
         self._update_mask()
-        cls = self.__class__
+        cls = self._constructor
         c = cls.__new__(cls)
         c._data = self._data.copy(deep)
         c._history = self._history.copy(deep)
+        c._name = self._name
+        c._ref = self._ref
         c.masker = self.masker
         c._optimize()
         return c
@@ -211,6 +286,10 @@ class BaseVariable:
         self._data._index = self._history._raw.index
 
     _restore_index = _optimize  # alias for now
+
+    @property
+    def name(self) -> str | None:
+        return self._name
 
     @property
     def index(self) -> pd.Index:
@@ -262,11 +341,11 @@ class BaseVariable:
 
     def is_flagged(self) -> pd.Series:
         """return a boolean series that indicates flagged values"""
-        return self.flags > UNFLAGGED
+        return self.flags.notna()
 
     def is_unflagged(self) -> pd.Series:
         """return a boolean series that indicates unflagged values"""
-        return self.flags == UNFLAGGED
+        return self.flags.isna()
 
     def template(self, fill_value=np.nan) -> pd.Series:
         return pd.Series(fill_value, index=self.index, dtype=float)
@@ -391,7 +470,8 @@ class BaseVariable:
 
     @final
     def __default_masker(self) -> np.ndarray:
-        return self.flags.to_numpy() > UNFLAGGED
+        # this is faster than series.notna()
+        return ~np.isnan(self.flags.to_numpy())
 
     # ########################################################################
     # Rendering
@@ -489,6 +569,10 @@ class BaseVariable:
         df.insert(0, "data", self._data._raw.filled())
         return df
 
+    def _create_ref(self):
+        mapping, meta, last = self._history._get_meta_mapping()
+        return Ref(self, meta, mapping, last)
+
 
 # ############################################################################
 # (public) Variable
@@ -504,10 +588,6 @@ class BaseVariable:
 
 
 class Variable(BaseVariable):  # noqa
-    @property
-    def _constructor(self: Variable) -> type[Variable]:
-        return type(self)
-
     # tools
     # =====
 
@@ -520,7 +600,7 @@ class Variable(BaseVariable):  # noqa
         return self.copy().set_flags(new, mask, func=this())
 
     def clear_flags(self) -> Variable:
-        return self.copy().set_flags(UNFLAGGED, self.index, func=this())
+        return self.copy().set_flags(SET_UNFLAGGED, self.index, func=this())
 
     def flag_unflagged(self, flag: FlagLike) -> Variable:
         return self.copy().set_flags(flag, self.is_unflagged(), func=this())
@@ -578,12 +658,16 @@ class Variable(BaseVariable):  # noqa
     # - may use the existing old History squeezed to a pd.Series (see
     #  `FlagsFrame.current`) as the initial flags for the new Variable
     # ########################################################################
+    def dropna(self):
+        data = self.orig.dropna()
+        flags = self.flags.reindex(data.index)
+        return self._constructor(data, flags, ref=self)
 
     def clip(self, lower, upper, flag: FlagLike = -88) -> Variable:
         # todo: meta
         flags = self.flag_limits(lower, upper, flag=flag).flags
         data = self.data.clip(lower, upper)
-        return self._constructor(data, flags, index=self.index)
+        return self._constructor(data, flags, ref=self)
 
     def interpolate(self, flag: FlagLike | None = None) -> Variable:
         # todo: meta
@@ -592,44 +676,24 @@ class Variable(BaseVariable):  # noqa
         else:
             flags = self.flags
         data = self.data.interpolate()
-        return self._constructor(data, flags)
+        return self._constructor(data, flags, ref=self)
 
     def reindex(self, index=None, method=None) -> Variable:
         # todo: meta
+        index = construct_index(index, "index", optional=False)
         data = self.data.reindex(index, method=method)
-        return self._constructor(data)
+        return self._constructor(data, ref=self)
 
 
 if __name__ == "__main__":
     from qaqc._testing import dtindex, N
     from qaqc.core.variable import Variable
 
-    def do1(data):
-        return data == 3
-
-    do2 = lambda x: pd.Series(False, index=x.index)
-
-    print(Variable(None))
-
     v = Variable([1, 2, 3, 4, N, N, 9], index=dtindex(7))
-    print(v)
-    v = v.flag_limits(2)
-    print(v)
-    v = v.flag_generic(do1)
-    v = v.flag_generic(do2)
-    v = v.flagna()
-    print(v)
-    print(v.meta.to_pandas().to_string())
-    colspace = len(v.get_history().columns) + 2.125
-    length = len(v.index)
-    size = 8
-    print(colspace * length * size)
-    print(v.memory_usage(deep=True).sum())
-    print(v.memory_usage(deep=True))
-
-    df = v.get_history().to_pandas()
-    d = v.data
-    print(
-        df.memory_usage(index=True, deep=True).sum()
-        + d.memory_usage(index=True, deep=True)
-    )
+    v = v.flag_limits(lower=2)
+    v = v.flag_limits(upper=6)
+    v2 = v.dropna()
+    v3 = v.reindex(v2.index)
+    print(v, v2, v3)
+    print(v._create_ref())
+    print(v._ref)

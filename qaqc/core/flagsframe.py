@@ -4,9 +4,9 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from copy import deepcopy
-from qaqc.typing import SupportsIndex, final
-from qaqc.constants import UNFLAGGED
-import qaqc.core.utils as utils
+from qaqc.typing import SupportsIndex, final, Idx
+from qaqc.constants import SET_UNFLAGGED
+from qaqc.core.utils import construct_index, repr_extended, check_index
 from typing import Any
 from qaqc.core.ops import OpsMixin
 
@@ -71,7 +71,7 @@ class Meta:
         return repr(self._raw)
 
     def _render_short(self, wrap=None):
-        return f"Meta: {utils.repr_extended(dict(self._raw), kwdicts=True, wrap=wrap)}"
+        return f"Meta: {repr_extended(dict(self._raw), kwdicts=True, wrap=wrap)}"
 
 
 class FlagsFrame(OpsMixin):
@@ -87,38 +87,55 @@ class FlagsFrame(OpsMixin):
     - comparable eq, ne, le, ge, lt, gt return pd.Dataframes
     """
 
-    def __init__(self, index: Any = None, initial: SupportsIndex | None = None) -> None:
-        if index is None:
-            if (
-                initial is not None
-                and hasattr(initial, "index")
-                and isinstance(initial.index, pd.Index)
-            ):
-                index = initial.index
+    @property
+    def _constructor(self: FlagsFrame) -> type[FlagsFrame]:
+        return type(self)
+
+    def __init__(self, initial: Any | None = None, index: Idx | None = None) -> None:
+        # late import to avoid cycles
+        from qaqc.core.variable import Variable
+
+        idx: pd.Index
+        f0: pd.Series | None
+
+        index = construct_index(index, name="Index", optional=True)
+
+        if initial is None:
+            if index is None:
+                raise ValueError("One of index and initial must not be None")
+            f0 = None
+            idx = index
+        elif isinstance(initial, pd.Index):  # special case
+            f0 = None
+            idx = initial
+        else:
+            if isinstance(initial, Variable):
+                initial = initial.get_history()
+            if isinstance(initial, FlagsFrame):
+                initial = initial.current()
+            if isinstance(initial, pd.DataFrame):
+                initial = initial.squeeze(axis=1)
+            if isinstance(initial, pd.Series):
+                f0 = initial
             else:
-                raise TypeError(
-                    "If no 'index' is given, 'initial' must have a pandas.Index."
-                )
-        # special case:  FlagsFrame(flags_frame)
-        elif isinstance(index, type(self)):
-            initial = index.current()
-            index = index.index
+                raise TypeError(type(initial))
+            idx = f0.index
 
-        index = utils.maybe_construct_Index(index, name="Index", errors="raise")
+        # a given index overwrites any extracted index
+        if index is not None:
+            idx = index
+        idx = check_index(idx, name="index")
 
-        if isinstance(initial, type(self)):
-            initial = initial.current()
-
-        self._raw = pd.DataFrame(index=index.copy(), dtype=float)
+        self._raw = pd.DataFrame(index=idx.copy(), dtype=float)
         self._meta = Meta()
 
-        if initial is not None:
+        if f0 is not None:
             self.append(initial, initial=True)
 
     def copy(self, deep=True) -> FlagsFrame:
-        new = self.__class__(self.index)
-        new._raw = self._raw.copy(deep)
-        new._meta = self._meta.copy(deep)
+        new = self._constructor(index=self.index)
+        new._raw = self._raw.copy(deep=deep)
+        new._meta = self._meta.copy(deep=deep)
         return new
 
     def to_pandas(self) -> pd.DataFrame:
@@ -172,13 +189,13 @@ class FlagsFrame(OpsMixin):
             result = pd.Series(data=np.nan, index=self.index, dtype=float)
         else:
             result = self._raw.ffill(axis=1).iloc[:, -1]
-        return result.fillna(UNFLAGGED)
+        return result.replace(SET_UNFLAGGED, np.nan)
 
     def is_flagged(self) -> pd.DataFrame:
-        return self._raw > UNFLAGGED
+        return self._raw.notna() & (self._raw > SET_UNFLAGGED)
 
     def is_unflagged(self) -> pd.DataFrame:
-        return self._raw == UNFLAGGED
+        return self._raw.isna() | (self._raw == SET_UNFLAGGED)
 
     def append_conditional(self, flag: float | int, cond, **meta) -> FlagsFrame:
         new = pd.Series(np.nan, index=self.index, dtype=float)
@@ -233,6 +250,76 @@ class FlagsFrame(OpsMixin):
             .to_string(*args, **kwargs)
             .replace("DataFrame", self.__class__.__name__)
         ) + meta
+
+    def get_meta_mapping(self, drop_unflagged: bool = False):
+        """mapping for current flags to meta.
+
+        This can be used to find the meta information for current flags.
+
+        Parameters
+        ----------
+
+        drop_unflagged : bool, default False
+            Reduce mapping to flagged data
+
+        Returns
+        -------
+        mapping: pd.Series
+            A series mapping flags index to meta key
+        """
+        mapping, *_ = self._get_meta_mapping(reduce=drop_unflagged)
+        if mapping is None:
+            mapping = pd.Series(np.nan, index=self.index, dtype=str)
+        if drop_unflagged:
+            mapping.dropna(inplace=True)
+        return mapping
+
+    def _get_meta_mapping(
+        self,
+        reduce: bool = True,
+    ) -> tuple[pd.Series, Meta, str | None] | tuple[None, None, None]:
+        """mapping for current flags to meta.
+
+        This can be used to find the meta information for current flags.
+
+        None
+
+        Parameters
+        ----------
+        reduce : bool, default False
+            Reduce mapping and meta to relevant info only
+
+        Returns
+        -------
+        mapping: pd.Series or None
+            A series mapping flags index to meta key, or None if no flags present
+        meta: Meta or None
+            A reduced meta, holding only information that are mapped to, or None
+            if no flags present
+        last_column: str or None
+            Last column of the current History, or None if history is empty
+
+        """
+        df = self.to_pandas()
+        meta = self.meta.copy(deep=True)
+
+        last = None
+        for fn in df.columns:
+            last = fn
+            # we ignore SET_UNFLAGGED here because it holds info
+            flagged = df[fn].notna()
+            if reduce and not flagged.any():
+                meta._raw.pop(fn)
+            df.loc[flagged, fn] = fn
+
+        if df.empty:
+            return None, None, last
+
+        mapping = df.ffill(axis=1).iloc[:, -1]
+        if reduce:
+            mapping.dropna(inplace=True)
+
+        return mapping, meta, last
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from qaqc.constants import UNFLAGGED
+from qaqc.constants import SET_UNFLAGGED
 from qaqc.errors import *
 from qaqc.core.flagsframe import FlagsFrame, Meta
 from qaqc.core.variable import Variable
